@@ -22,7 +22,7 @@ permissions:
 
 env:
   ENV_NAME: ${{ inputs.environment }}
-  AWS_REGION: ${{ inputs.region == 'global' && 'eu-central-1' || inputs.region }}
+  AWS_REGION: ${{ inputs.region }}
 
 jobs:
   repo_details:

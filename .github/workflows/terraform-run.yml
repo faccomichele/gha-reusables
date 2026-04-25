@@ -38,7 +38,7 @@ env:
   ENV_NAME: ${{ inputs.environment }}
   AWS_REGION: ${{ inputs.region }}
   VALIDATION_ENVIRONMENT: ${{ inputs.validation_environment }}
-  TF_STATE_SSM_REGION: ${{ vars.TF_STATE_SSM_REGION || 'eu-central-1' }}
+  TF_STATE_SSM_REGION: ${{ vars.TF_STATE_SSM_REGION || inputs.region }}
 
 jobs:
   repo_details:
@@ -177,33 +177,6 @@ jobs:
           echo "varfile=${ENV_NAME^^}_${REGION_UNDERSCORE^^}_TF_VARS" | tee -a $GITHUB_OUTPUT
         fi
       id: workspace
-
-    - name: Create optional .tfvars for current environment
-      shell: bash
-      run: |
-        # Set the definition into a variable while preserving newlines using a heredoc
-        TFVARS_DEFINITION=$(cat <<'TFVARS_EOF'
-        ${{ vars[ steps.aws_login.outputs.tfvars ] }}
-        TFVARS_EOF
-        )
-        if [[ -z "$TFVARS_DEFINITION" ]]; then
-          TFVARS_DEFINITION=$(cat <<'TFVARS_EOF'
-        ${{ vars[ steps.workspace.outputs.varfile ] }}
-        TFVARS_EOF
-        )
-        fi
-
-        mkdir -p config
-
-        if [[ -n "$TFVARS_DEFINITION" ]]; then
-          cat > "config/${{ steps.workspace.outputs.name }}.tfvars" <<EOF
-        $TFVARS_DEFINITION
-        EOF
-          echo "Created config/${{ steps.workspace.outputs.name }}.tfvars from repo vars"
-        else
-          echo "No TFVARS found for ${ENV_NAME}, skipping."
-        fi
-      working-directory: ${{ inputs.working-directory }}
 
     - name: Set Terraform Workspace
       shell: bash
