@@ -3,25 +3,23 @@ name: Lambda Build (reusable workflow)
 on:
   workflow_call:
     inputs:
+      environment:
+        description: 'The target environment (dev, stg, prod), required when s3-bucket is provided'
+        type: string
+        required: true
+      region:
+        description: 'AWS region for the S3 bucket'
+        type: string
+        required: true
       working-directory:
         description: 'The location containing the lambda subfolders to build'
         type: string
         default: '.'
-      environment:
-        description: 'The target environment (dev, stg, prod), required when s3-bucket is provided'
-        type: string
-        required: false
-        default: 'dev'
       full-rebuild:
         description: 'Whether to perform a full rebuild of all lambdas (true/false)'
         type: boolean
         required: false
         default: false
-      region:
-        description: 'AWS region for the S3 bucket'
-        type: string
-        required: false
-        default: 'eu-central-1'
 
 permissions:
   id-token: write
@@ -400,6 +398,6 @@ jobs:
     - name: Upload Lambda packages to S3
       shell: bash
       run: |
-        aws s3 cp "${{ inputs.working-directory }}/" "s3://${{ vars[steps.aws_login.outputs.artifact_bucket] }}/${REPO_NAME}/${ENV_NAME}/lambdas/" \
+        aws s3 cp "${{ inputs.working-directory }}/" "s3://${{ vars.SHARED_ARTIFACTS_S3_BUCKET }}-${{ secrets.SHARED_ARTIFACTS_S3_BUCKET_ACCOUNT_ID }}/${REPO_NAME}/${ENV_NAME}/lambdas/" \
           --recursive --exclude "*" --include "*.zip" --no-progress
-        echo "Lambda packages uploaded to s3://${{ vars[steps.aws_login.outputs.artifact_bucket] }}/${REPO_NAME}/${ENV_NAME}/lambdas/"
+        echo "Lambda packages uploaded to s3://${{ vars.SHARED_ARTIFACTS_S3_BUCKET }}-${{ secrets.SHARED_ARTIFACTS_S3_BUCKET_ACCOUNT_ID }}/${REPO_NAME}/${ENV_NAME}/lambdas/"
