@@ -1,0 +1,408 @@
+name: Lambda Build (reusable workflow)
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'The location containing the lambda subfolders to build'
+        type: string
+        default: '.'
+      environment:
+        description: 'The target environment (dev, stg, prod), required when s3-bucket is provided'
+        type: string
+        required: false
+        default: 'dev'
+      full-rebuild:
+        description: 'Whether to perform a full rebuild of all lambdas (true/false)'
+        type: boolean
+        required: false
+        default: false
+      region:
+        description: 'AWS region for the S3 bucket'
+        type: string
+        required: false
+        default: 'eu-central-1'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ENV_NAME: ${{ inputs.environment }}
+  AWS_REGION: ${{ inputs.region }}
+
+jobs:
+  repo_details:
+    name: Get repository details
+    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    outputs:
+      repo-name: ${{ steps.repo_details.outputs.repo-name }}
+      repo-url: ${{ steps.repo_details.outputs.repo-url }}
+    steps:
+    - name: Set branch names
+      id: repo_details
+      uses: faccomichele-org/gha-reusables/.github/actions/get-repo-details@main
+
+  detect_lambdas:
+    name: Detect Lambda Functions - (${{ inputs.working-directory }})
+    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+      has_lambdas: ${{ steps.detect.outputs.has_lambdas }}
+    steps:
+    - name: Get source code locally from this repo
+      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      with:
+        # Full history is needed to detect changed files when not doing a full rebuild
+        fetch-depth: ${{ inputs.full-rebuild && 1 || 0 }}
+
+    - name: Detect Lambda functions and build types
+      id: detect
+      shell: bash
+      run: |
+        LAMBDAS='[]'
+        HAS_LAMBDAS='false'
+        FULL_REBUILD="${{ inputs.full-rebuild }}"
+
+        # Check if working directory exists
+        if [ ! -d "${{ inputs.working-directory }}" ]; then
+          echo "Working directory ${{ inputs.working-directory }} does not exist"
+          echo "matrix=$LAMBDAS" >> $GITHUB_OUTPUT
+          echo "has_lambdas=$HAS_LAMBDAS" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        cd "${{ inputs.working-directory }}"
+
+        # ---------------------------------------------------------------------------
+        # Partial-build mode: detect which lambda directories were modified via git diff
+        # ---------------------------------------------------------------------------
+        declare -A MODIFIED_DIRS
+        if [ "$FULL_REBUILD" = "false" ]; then
+          echo "Partial build: detecting modified lambda directories..."
+
+          BEFORE="${{ github.event.before }}"
+          SHA="${{ github.sha }}"
+          CHANGED_FILES=""
+
+          # Prefer an explicit before/after range (available on push events)
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            CHANGED_FILES=$(git diff --name-only "$BEFORE" "$SHA" 2>/dev/null || true)
+          fi
+
+          # Fall back to comparing HEAD against its parent
+          if [ -z "$CHANGED_FILES" ]; then
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+          fi
+
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "Warning: could not determine changed files; falling back to full rebuild"
+            FULL_REBUILD="true"
+          else
+            echo "Changed files detected:"
+            echo "$CHANGED_FILES"
+
+            # Normalize working-directory prefix for path stripping
+            WORKDIR="${{ inputs.working-directory }}"
+            WORKDIR="${WORKDIR#./}"
+            [ "$WORKDIR" = "." ] && WORKDIR=""
+
+            while IFS= read -r file; do
+              # Skip files outside the working directory
+              if [ -n "$WORKDIR" ]; then
+                [[ "$file" == "$WORKDIR/"* ]] || continue
+                rel="${file#$WORKDIR/}"
+              else
+                rel="$file"
+              fi
+
+              # Register the depth-1 and depth-2 directory components as candidates
+              IFS='/' read -ra parts <<< "$rel"
+              [ "${#parts[@]}" -gt 1 ] && MODIFIED_DIRS["${parts[0]}"]=1
+              [ "${#parts[@]}" -gt 2 ] && MODIFIED_DIRS["${parts[0]}/${parts[1]}"]=1
+            done <<< "$CHANGED_FILES"
+
+            if [ "${#MODIFIED_DIRS[@]}" -eq 0 ]; then
+              echo "No lambda directories changed; nothing to build"
+              echo "matrix=$LAMBDAS" >> $GITHUB_OUTPUT
+              echo "has_lambdas=$HAS_LAMBDAS" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            echo "Modified lambda candidate directories: ${!MODIFIED_DIRS[*]}"
+          fi
+        fi
+
+        # Enable nullglob to handle case when no directories exist
+        shopt -s nullglob
+
+        # Find all subdirectories (lambda functions) one level deep as well
+        for dir in */ */*/; do
+          # Normalize and remove trailing slash
+          dir=${dir%/}
+
+          # Skip if not a directory (the glob may produce non-dir entries)
+          if [ ! -d "$dir" ]; then
+            continue
+          fi
+
+          # In partial-build mode, skip directories that were not modified
+          if [ "$FULL_REBUILD" = "false" ] && [ -z "${MODIFIED_DIRS[$dir]+_}" ]; then
+            echo "Skipping unmodified directory: $dir"
+            continue
+          fi
+
+          # Initialize variables
+          BUILD_TYPE=""
+          HANDLER_FILE=""
+          HAS_HANDLER="false"
+
+          # Check for Python files directly under the directory
+          if find "$dir" -maxdepth 1 -name "*.py" -type f | grep -q .; then
+            BUILD_TYPE="python"
+            HAS_HANDLER="true"
+            # Find the first Python file as handler
+            HANDLER_FILE=$(find "$dir" -maxdepth 1 -name "*.py" -type f -print0 | head -z -n 1 | xargs -0 basename)
+          # Check for Node.js files directly under the directory
+          elif find "$dir" -maxdepth 1 -name "*.js" -type f | grep -q .; then
+            BUILD_TYPE="nodejs"
+            HAS_HANDLER="true"
+            # Find the first JavaScript file as handler
+            HANDLER_FILE=$(find "$dir" -maxdepth 1 -name "*.js" -type f -print0 | head -z -n 1 | xargs -0 basename)
+          # Check for Python requirements.txt (layer-only)
+          elif [ -f "$dir/requirements.txt" ]; then
+            BUILD_TYPE="python"
+            HAS_HANDLER="false"
+          # Check for Node.js package.json (layer-only)
+          elif [ -f "$dir/package.json" ]; then
+            BUILD_TYPE="nodejs"
+            HAS_HANDLER="false"
+          else
+            # No lambda files or dependency files in this directory; skip
+            continue
+          fi
+
+          # Extract path and folder components
+          # If dir contains a slash, split it; otherwise path is empty
+          if [[ "$dir" == */* ]]; then
+            LAMBDA_PATH=$(dirname "$dir")
+            LAMBDA_FOLDER=$(basename "$dir")
+          else
+            LAMBDA_PATH=""
+            LAMBDA_FOLDER="$dir"
+          fi
+
+          # Add to matrix with new structure
+          # Note: handler field contains the handler filename when has_handler is true, and is empty for layer-only builds
+          HAS_LAMBDAS='true'
+          LAMBDAS=$(echo "$LAMBDAS" | jq -c ". += [{\"path\": \"$LAMBDA_PATH\", \"folder\": \"$LAMBDA_FOLDER\", \"handler\": \"$HANDLER_FILE\", \"type\": \"$BUILD_TYPE\", \"has_handler\": $HAS_HANDLER}]")
+          if [ "$HAS_HANDLER" = "true" ]; then
+            echo "Detected $BUILD_TYPE lambda: path='$LAMBDA_PATH', folder='$LAMBDA_FOLDER', handler='$HANDLER_FILE'"
+          else
+            echo "Detected $BUILD_TYPE layer-only: path='$LAMBDA_PATH', folder='$LAMBDA_FOLDER' (no handler file)"
+          fi
+        done
+        
+        echo "matrix=$LAMBDAS" >> $GITHUB_OUTPUT
+        echo "has_lambdas=$HAS_LAMBDAS" >> $GITHUB_OUTPUT
+        echo "Detected lambdas matrix: $LAMBDAS"
+
+  build_lambdas:
+    name: Build ${{ matrix.lambda.path }}${{ matrix.lambda.path != '' && '/' || '' }}${{ matrix.lambda.folder }} (${{ matrix.lambda.type }})
+    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    if: needs.detect_lambdas.outputs.has_lambdas == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        lambda: ${{ fromJson(needs.detect_lambdas.outputs.matrix) }}
+    needs: [detect_lambdas, repo_details]
+    env:
+      REPO_NAME: ${{ needs.repo_details.outputs.repo-name }}
+    steps:
+    - name: Custom AWS Login
+      id: aws_login
+      uses: faccomichele-org/gha-reusables/.github/actions/custom-aws-login@main
+      with:
+        dev_account: ${{ secrets.DEV_AWS_ID }}
+        stg_account: ${{ secrets.STG_AWS_ID }}
+        prod_account: ${{ secrets.PROD_AWS_ID }}
+        dev_role_secret: ${{ secrets.DEV_ROLE_SECRET }}
+        stg_role_secret: ${{ secrets.STG_ROLE_SECRET }}
+        prod_role_secret: ${{ secrets.PROD_ROLE_SECRET }}
+
+    - name: Get source code locally from this repo
+      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+    - name: Setup Python
+      if: matrix.lambda.type == 'python'
+      uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+      with:
+        python-version: ${{ vars.PYTHON_VERSION || '3.13' }}
+
+    - name: Setup Node.js
+      if: matrix.lambda.type == 'nodejs'
+      uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4.0.3
+      with:
+        node-version: ${{ vars.NODE_VERSION || '24' }}
+
+    - name: Build Python Lambda
+      if: matrix.lambda.type == 'python'
+      shell: bash
+      run: |
+        # Navigate to the lambda directory (create zips here, then move them up one level)
+        if [ -n "${{ matrix.lambda.path }}" ]; then
+          cd "${{ inputs.working-directory }}/${{ matrix.lambda.path }}/${{ matrix.lambda.folder }}"
+        else
+          cd "${{ inputs.working-directory }}/${{ matrix.lambda.folder }}"
+        fi
+
+        # Use the folder name as the package filename
+        NAME_ONLY="${{ matrix.lambda.folder }}"
+
+        # Install dependencies if requirements.txt exists
+        if [ -f "requirements.txt" ]; then
+          echo "Installing Python dependencies to python/ directory..."
+          mkdir -p python
+          pip install -r requirements.txt -t python/ --only-binary=:all:
+
+          # Create layer zip with dependencies only in current directory
+          if [ -d "python" ] && [ "$(ls -A python)" ]; then
+            echo "Creating layer package with dependencies..."
+            zip -r "${NAME_ONLY}-layer.zip" python/ || exit 1
+            # Move the layer zip up one level (to parent folder)
+            mv "${NAME_ONLY}-layer.zip" "../${NAME_ONLY}-layer.zip"
+            echo "Lambda layer package moved to parent: ../${NAME_ONLY}-layer.zip"
+            ls -lh "../${NAME_ONLY}-layer.zip" || true
+          else
+            echo "Warning: python/ directory is empty or not present, skipping layer package creation"
+          fi
+
+          # Clean up python directory
+          rm -rf python
+        else
+          echo "No requirements.txt found, skipping dependency installation and layer creation"
+        fi
+
+        # Create main zip file with only Python code (no dependencies, no requirements.txt)
+        # Only create function package if handler files exist
+        if [ "${{ matrix.lambda.has_handler }}" = "true" ]; then
+          # Define common exclusions
+          COMMON_EXCLUSIONS="-x .git/* -x .DS_Store -x *.log"
+          PYTHON_EXCLUSIONS="-x *.pyc -x __pycache__/* -x python/* -x requirements.txt -x node_modules/*"
+
+          echo "Creating main package with code only..."
+          if ls *.py 1> /dev/null 2>&1; then
+            zip "${NAME_ONLY}.zip" *.py $COMMON_EXCLUSIONS $PYTHON_EXCLUSIONS
+            # Move the package zip up one level (to parent folder)
+            mv "${NAME_ONLY}.zip" "../${NAME_ONLY}.zip"
+            echo "Lambda package moved to parent: ../${NAME_ONLY}.zip"
+            ls -lh "../${NAME_ONLY}.zip"
+          else
+            echo "Error: No Python files found to package"
+            exit 1
+          fi
+        else
+          echo "No handler file present, skipping function package creation (layer-only build)"
+        fi
+
+    - name: Build Node.js Lambda
+      if: matrix.lambda.type == 'nodejs'
+      shell: bash
+      run: |
+        # Navigate to the lambda directory (create zips here, then move them up one level)
+        if [ -n "${{ matrix.lambda.path }}" ]; then
+          cd "${{ inputs.working-directory }}/${{ matrix.lambda.path }}/${{ matrix.lambda.folder }}"
+        else
+          cd "${{ inputs.working-directory }}/${{ matrix.lambda.folder }}"
+        fi
+
+        # Use the folder name as the package filename
+        NAME_ONLY="${{ matrix.lambda.folder }}"
+
+        # Install dependencies if package.json exists
+        if [ -f "package.json" ]; then
+          # Use 'npm ci' when a lockfile is present for a deterministic, reproducible install.
+          npm install --package-lock-only
+          if [ -f "package-lock.json" ] || [ -f "npm-shrinkwrap.json" ]; then
+            echo "Lockfile found – using 'npm ci' for deterministic install (omitting dev and optional deps)..."
+            npm ci --omit=dev --omit=optional
+          else
+            echo "No lockfile found – falling back to 'npm install' (omitting dev and optional deps)..."
+            npm install --omit=dev --omit=optional
+          fi
+
+          # Create layer zip with dependencies only (node_modules) in current directory
+          if [ -d "node_modules" ] && [ "$(ls -A node_modules)" ]; then
+            # Prune unnecessary files from node_modules before zipping to reduce layer size.
+            # Lambda layers have a 250 MB unzipped limit; removing docs, tests, type definitions,
+            # source maps, and other non-runtime files can significantly shrink the artifact.
+            # This step is best-effort: failures are ignored so the build is never blocked.
+            echo "Pruning non-runtime files from node_modules to reduce layer size..."
+            find node_modules -type d \( \
+              -name "test" -o -name "tests" \
+              -o -name "example" -o -name "examples" \
+              -o -name "doc" -o -name "docs" \
+              -o -name "coverage" \
+              -o -name ".nyc_output" \
+            \) -prune -exec rm -rf {} + 2>/dev/null || true
+            find node_modules -type f \( \
+              -name "*.md" \
+              -o -name "*.markdown" \
+              -o -name "*.map" \
+              -o -name "*.ts" \
+              -o -name "CHANGELOG*" \
+              -o -name "LICENCE*" -o -name "LICENSE*" \
+              -o -name "NOTICE*" \
+              -o -name "AUTHORS*" \
+              -o -name "CONTRIBUTORS*" \
+              -o -name ".eslintrc*" \
+              -o -name ".prettierrc*" \
+              -o -name "tsconfig*.json" \
+            \) -delete 2>/dev/null || true
+
+            echo "Creating layer package with dependencies..."
+            mkdir -p nodejs
+            cp -r node_modules nodejs/
+            zip -r "${NAME_ONLY}-layer.zip" nodejs/ || exit 1
+            # Move the layer zip up one level (to parent folder)
+            mv "${NAME_ONLY}-layer.zip" "../${NAME_ONLY}-layer.zip"
+            echo "Lambda layer package moved to parent: ../${NAME_ONLY}-layer.zip"
+            ls -lh "../${NAME_ONLY}-layer.zip" || true
+
+            # Clean up nodejs directory
+            rm -rf nodejs
+          else
+            echo "Warning: node_modules directory is empty or not present, skipping layer package creation"
+          fi
+        else
+          echo "No package.json found, skipping dependency installation and layer creation"
+        fi
+
+        # Create main zip file with only JavaScript code (no dependencies, no package files)
+        # Only create function package if handler files exist
+        if [ "${{ matrix.lambda.has_handler }}" = "true" ]; then
+          # Define common exclusions
+          COMMON_EXCLUSIONS="-x .git/* -x .DS_Store -x *.log"
+          NODEJS_EXCLUSIONS="-x node_modules/* -x package.json -x package-lock.json -x nodejs/*"
+
+          echo "Creating main package with code only..."
+          if ls *.js 1> /dev/null 2>&1; then
+            zip "${NAME_ONLY}.zip" *.js $COMMON_EXCLUSIONS $NODEJS_EXCLUSIONS
+            # Move the package zip up one level (to parent folder)
+            mv "${NAME_ONLY}.zip" "../${NAME_ONLY}.zip"
+            echo "Lambda package moved to parent: ../${NAME_ONLY}.zip"
+            ls -lh "../${NAME_ONLY}.zip"
+          else
+            echo "Error: No JavaScript files found to package"
+            exit 1
+          fi
+        else
+          echo "No handler file present, skipping function package creation (layer-only build)"
+        fi
+
+    - name: Upload Lambda packages to S3
+      shell: bash
+      run: |
+        aws s3 cp "${{ inputs.working-directory }}/" "s3://${{ vars[steps.aws_login.outputs.artifact_bucket] }}/${REPO_NAME}/${ENV_NAME}/lambdas/" \
+          --recursive --exclude "*" --include "*.zip" --no-progress
+        echo "Lambda packages uploaded to s3://${{ vars[steps.aws_login.outputs.artifact_bucket] }}/${REPO_NAME}/${ENV_NAME}/lambdas/"

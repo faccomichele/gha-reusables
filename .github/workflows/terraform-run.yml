@@ -1,0 +1,399 @@
+name: Terraform Run (reusable workflow)
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'The target environment/workspace to be used (dev, stg, prod)'
+        type: string
+        default: 'dev'
+      region:
+        description: 'The region available for the environment in AWS format embedded as a string, if applicable, i.e.: \"us-west-2\"'
+        type: string
+        default: 'global'
+      validation_environment:
+        description: 'Optional validation environment suffix (e.g., val1). When set, it is appended to Terraform workspace and Project tag.'
+        type: string
+        default: ''
+      action:
+        description: 'The Terraform action to perform: "plan" (review changes only), "apply" (apply changes), or "destroy" (destroy resources)'
+        type: string
+        default: 'plan'
+      working-directory:
+        description: 'The location containing the terraform related files'
+        type: string
+        default: '.'
+      upload-output-artifact:
+        description: 'Optional: If true, upload the terraform output artifact from the current workflow run, otherwise it skips it.'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  id-token: write
+  pull-requests: write
+  contents: read
+
+env:
+  ENV_NAME: ${{ inputs.environment }}
+  AWS_REGION: ${{ inputs.region }}
+  VALIDATION_ENVIRONMENT: ${{ inputs.validation_environment }}
+  TF_STATE_SSM_REGION: ${{ vars.TF_STATE_SSM_REGION || 'eu-central-1' }}
+
+jobs:
+  repo_details:
+    name: Get repository details
+    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    outputs:
+      repo-name: ${{ steps.repo_details.outputs.repo-name }}
+      repo-url: ${{ steps.repo_details.outputs.repo-url }}
+    steps:
+    - name: Set branch names
+      id: repo_details
+      uses: faccomichele-org/gha-reusables/.github/actions/get-repo-details@main
+
+  terraform_plan_apply:
+    name: Run Terraform (${{ inputs.environment }}_${{ inputs.region }}) - (${{ inputs.working-directory }})
+    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    if: ${{ inputs.working-directory != '[]' }}
+    needs: repo_details
+    env:
+      REPO_NAME: ${{ needs.repo_details.outputs.repo-name }}
+      REPO_URL: ${{ needs.repo_details.outputs.repo-url }}
+    steps:
+    - name: Custom AWS Login
+      id: aws_login
+      uses: faccomichele-org/gha-reusables/.github/actions/custom-aws-login@main
+      with:
+        dev_account: ${{ secrets.DEV_AWS_ID }}
+        stg_account: ${{ secrets.STG_AWS_ID }}
+        prod_account: ${{ secrets.PROD_AWS_ID }}
+        dev_role_secret: ${{ secrets.DEV_ROLE_SECRET }}
+        stg_role_secret: ${{ secrets.STG_ROLE_SECRET }}
+        prod_role_secret: ${{ secrets.PROD_ROLE_SECRET }}
+
+    - name: Get source code locally from this repo
+      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      # TO DO: Hardcode the script version once stable
+    - name: Get the Terraform Report Script
+      shell: bash
+      run: wget -O tf_out_to_md.py https://raw.githubusercontent.com/faccomichele-org/gha-reusables/refs/heads/main/terraform/tf_out_to_md.py && chmod +x tf_out_to_md.py
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Download lambda artifacts from S3 if requested
+      if: vars[steps.aws_login.outputs.artifact_bucket] != ''
+      shell: bash
+      run: |
+        mkdir -p "${{ inputs.working-directory }}/lambda"
+        aws s3 sync "s3://${{ vars[steps.aws_login.outputs.artifact_bucket] }}/${REPO_NAME}/${ENV_NAME}/lambdas/" \
+          "${{ inputs.working-directory }}/lambda/" --no-progress
+        echo "Lambda packages downloaded from s3://${{ vars[steps.aws_login.outputs.artifact_bucket] }}/${REPO_NAME}/${ENV_NAME}/lambdas/"
+
+    - name: Retrieve central account and role secret from SSM
+      id: get_core_params
+      shell: bash
+      run: |
+        echo "Retrieving SSM parameters from region ${TF_STATE_SSM_REGION}..."
+        CORE_ACCOUNT=$(aws ssm get-parameter --name "/manual/global/central-account/account-id" --with-decryption --region "$TF_STATE_SSM_REGION" --query Parameter.Value --output text)
+        CORE_ROLE_SECRET=$(aws ssm get-parameter --name "/manual/${ENV_NAME}/terraform/state-file/role-secret" --with-decryption --region "$TF_STATE_SSM_REGION" --query Parameter.Value --output text)
+        # Mask values in GitHub Actions logs
+        echo "::add-mask::$CORE_ACCOUNT"
+        echo "::add-mask::$CORE_ROLE_SECRET"
+        echo "core_account=$CORE_ACCOUNT" | tee -a $GITHUB_OUTPUT
+        echo "core_role_secret=$CORE_ROLE_SECRET" | tee -a $GITHUB_OUTPUT
+    
+    - name: Get S3 Backend configuration for storing shared state files
+      shell: bash
+      run: |
+        cat > s3backend.tf << EOF
+        terraform {
+          backend "s3" {
+            bucket        = "terraform-core-aws-state-files-${ENV_NAME}-${{ steps.get_core_params.outputs.core_account }}"
+            key           = "${REPO_NAME}/terraform.tfstate"
+            region        = "${TF_STATE_SSM_REGION}"
+            assume_role   = {
+              role_arn    = "arn:aws:iam::${{ steps.get_core_params.outputs.core_account }}:role/terraform-core-backend-setup-${ENV_NAME}-TfStateRole-${{ steps.get_core_params.outputs.core_role_secret }}"
+            }
+            encrypt       = true
+            use_lockfile  = true
+          }
+        }
+        EOF
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Test assume role access to S3 backend bucket
+      if: ${{ env.ACTIONS_STEP_DEBUG == 'true' || env.ACTIONS_RUNNER_DEBUG == 'true' }}
+      shell: bash
+      run: |
+        echo "Assuming role to access S3 backend..."
+        CREDS=$(aws sts assume-role --role-arn "arn:aws:iam::${{ steps.get_core_params.outputs.core_account }}:role/terraform-core-backend-setup-TerraformStateRole-${{ steps.get_core_params.outputs.core_role_secret }}" --role-session-name "TestS3AccessSession" --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text)
+        read AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN <<< "$CREDS"
+        export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+        aws sts get-caller-identity
+        BUCKET="s3://terraform-core-aws-state-files-${ENV_NAME}-${{ steps.get_core_params.outputs.core_account }}"
+        aws s3 ls "$BUCKET" || exit 1
+
+        # Create, get and delete a small non-empty object to validate S3 operations with assumed role
+        OBJ_KEY="${REPO_NAME}/tmp-test-${ENV_NAME}-${RANDOM}.txt"
+        printf '%s\n' "temporary test object" > /tmp/tmp-test-object.txt
+        aws s3 cp /tmp/tmp-test-object.txt "$BUCKET/$OBJ_KEY" || { echo "upload failed"; exit 1; }
+        aws s3 cp "$BUCKET/$OBJ_KEY" /tmp/downloaded-test-object.txt || { echo "download failed"; exit 1; }
+        if [ ! -s /tmp/downloaded-test-object.txt ]; then echo "downloaded object is empty"; exit 1; fi
+        aws s3 rm "$BUCKET/$OBJ_KEY" || { echo "delete failed"; exit 1; }
+        rm -f /tmp/tmp-test-object.txt /tmp/downloaded-test-object.txt
+
+        # Unset temporary credentials so they do not persist to later steps
+        unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN || true
+      
+    - name: Configure Terraform
+      uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # 3.1.2
+      with:
+        terraform_version:  ${{ vars.TF_VERSION || '1.14.3' }}
+        terraform_wrapper: false
+
+    - name: Init Terraform
+      shell: bash
+      run: terraform init --upgrade --reconfigure
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Set Terraform Workspace Name
+      shell: bash
+      run: |
+        VALIDATION_ENV_RAW="${VALIDATION_ENVIRONMENT:-}"
+        VALIDATION_ENV_TRIMMED="$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' <<< "$VALIDATION_ENV_RAW")"
+        VALIDATION_ENV_SANITIZED="$(echo "$VALIDATION_ENV_TRIMMED" | tr '[:upper:]' '[:lower:]')"
+        VALIDATION_ENV_SANITIZED="$(echo "$VALIDATION_ENV_SANITIZED" | sed -E 's/[^a-z0-9_-]+/-/g')"
+        VALIDATION_ENV_SANITIZED="$(echo "$VALIDATION_ENV_SANITIZED" | sed -E 's/[-_]+$//; s/^[-_]+//')"
+        VALIDATION_ENV_SANITIZED="$(echo "$VALIDATION_ENV_SANITIZED" | sed -E 's/-+/-/g')"
+        VALIDATION_SUFFIX=""
+        if [[ -n "$VALIDATION_ENV_SANITIZED" ]]; then
+          VALIDATION_SUFFIX="_${VALIDATION_ENV_SANITIZED}"
+        fi
+        echo "validation-suffix=$VALIDATION_SUFFIX" | tee -a $GITHUB_OUTPUT
+        if [[ "${AWS_REGION}" == "global" ]]; then
+          echo "name=${ENV_NAME}${VALIDATION_SUFFIX}" | tee -a $GITHUB_OUTPUT
+          echo "varfile=${ENV_NAME^^}_TF_VARS" | tee -a $GITHUB_OUTPUT
+        else
+          echo "name=${ENV_NAME}_${AWS_REGION}${VALIDATION_SUFFIX}" | tee -a $GITHUB_OUTPUT
+          REGION_UNDERSCORE=${AWS_REGION//-/_}
+          echo "varfile=${ENV_NAME^^}_${REGION_UNDERSCORE^^}_TF_VARS" | tee -a $GITHUB_OUTPUT
+        fi
+      id: workspace
+
+    - name: Create optional .tfvars for current environment
+      shell: bash
+      run: |
+        # Set the definition into a variable while preserving newlines using a heredoc
+        TFVARS_DEFINITION=$(cat <<'TFVARS_EOF'
+        ${{ vars[ steps.aws_login.outputs.tfvars ] }}
+        TFVARS_EOF
+        )
+        if [[ -z "$TFVARS_DEFINITION" ]]; then
+          TFVARS_DEFINITION=$(cat <<'TFVARS_EOF'
+        ${{ vars[ steps.workspace.outputs.varfile ] }}
+        TFVARS_EOF
+        )
+        fi
+
+        mkdir -p config
+
+        if [[ -n "$TFVARS_DEFINITION" ]]; then
+          cat > "config/${{ steps.workspace.outputs.name }}.tfvars" <<EOF
+        $TFVARS_DEFINITION
+        EOF
+          echo "Created config/${{ steps.workspace.outputs.name }}.tfvars from repo vars"
+        else
+          echo "No TFVARS found for ${ENV_NAME}, skipping."
+        fi
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Set Terraform Workspace
+      shell: bash
+      run: terraform workspace select -or-create ${{ steps.workspace.outputs.name }}
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Set Tags Variable
+      shell: bash
+      run: |
+        PROJECT_NAME="${REPO_NAME}${{ steps.workspace.outputs.validation-suffix }}"
+        TAGS=$(echo """{
+          \"Project\": \"${PROJECT_NAME}\",
+          \"RepositoryURL\": \"${REPO_URL}\",
+          \"Environment\": \"${ENV_NAME}\",
+          \"Automation\": \"Terraform\",
+          \"Organization\": \"${{ github.repository_owner }}\",
+          \"ManagedBy\": \"Terraform\",
+          \"Region\": \"${AWS_REGION}\",
+          \"RepositoryPath\": \"${{ inputs.working-directory }}\",
+          \"RepositoryFile\": \"main.tf\"
+        }""" | jq -c)
+        if [[ "${{ vars.EKS_CLUSTER }}" != "" ]]; then
+          TAGS=$(echo $TAGS "{\"EKS Cluster\": \"${{ vars.EKS_CLUSTER }}\"}" | jq -sc '.[0] * .[1]')
+        fi
+        echo "value=tags=$TAGS" | tee -a $GITHUB_OUTPUT
+      id: tags_var
+
+    - name: Set Terraform Options
+      id: options
+      shell: bash
+      run: |
+        case "${{ inputs.action }}" in
+          plan)
+            echo "action=plan -out=tfplan" | tee -a $GITHUB_OUTPUT
+            ;;
+          apply)
+            echo "action=apply -auto-approve" | tee -a $GITHUB_OUTPUT
+            ;;
+          destroy)
+            echo "action=destroy -auto-approve" | tee -a $GITHUB_OUTPUT
+            ;;
+          *)
+            echo "Error: Invalid action '${{ inputs.action }}'. Must be 'plan', 'apply', or 'destroy'."
+            exit 1
+            ;;
+        esac
+        CONFIGFILE=''
+        if [[ -f config/${{ steps.workspace.outputs.name }}.tfvars ]]; then
+          CONFIGFILE='-var-file=config/${{ steps.workspace.outputs.name }}.tfvars'
+        fi
+        echo "config-file=$CONFIGFILE" | tee -a $GITHUB_OUTPUT
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Run Terraform ${{ steps.options.outputs.action }}
+      id: tf_run
+      shell: bash
+      env:
+        ACTION: ${{ steps.options.outputs.action }}
+        CONFIG_FILE: ${{ steps.options.outputs.config-file }}
+        TAGS_VAR: ${{ steps.tags_var.outputs.value }}
+      run: terraform $ACTION -json -no-color ${CONFIG_FILE:+$CONFIG_FILE} -var="$TAGS_VAR" 2>&1 | tee tf-logs.json
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Create Show output from Plan action
+      if: ${{ inputs.action == 'plan' }}
+      shell: bash
+      run: terraform show -json tfplan > tf-show.json
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Run Terraform Output to MD Report
+      id: tf_report
+      if: always()
+      shell: bash
+      run: ./tf_out_to_md.py
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Create JSON Output
+      if: ${{ inputs.action != 'destroy' }}
+      shell: bash
+      run: terraform output -json > tf-output.json
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Convert working-directory Name
+      id: wd_name
+      if: always()
+      shell: bash
+      run: echo "name=$(echo '${{ inputs.working-directory }}' | tr '/.' '_' )" | tee -a $GITHUB_OUTPUT
+
+    - name: Upload Terraform JSON outputs artifact
+      if: inputs.upload-output-artifact
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      with:
+        name: terraform-output-${{ inputs.environment }}-${{ inputs.region }}-${{ steps.wd_name.outputs.name }}-${{ github.run_id }}
+        path: ${{ inputs.working-directory }}/tf-output.json
+        retention-days: 1
+    
+    - name: Add report to job summary
+      if: always() && steps.tf_report.outcome == 'success'
+      shell: bash
+      run: cat tf-report.md >> $GITHUB_STEP_SUMMARY
+      working-directory: ${{ inputs.working-directory }}
+    
+    - name: Prepare Terraform output for comment
+      if: always() && steps.tf_report.outcome == 'success' && github.event_name == 'pull_request'
+      id: tf_comment_prep
+      shell: bash
+      run: |
+        ACTION="${{ inputs.action }}"
+        ACTION_TITLE="$(echo ${ACTION:0:1} | tr '[:lower:]' '[:upper:]')${ACTION:1}"
+        COMMENT_BODY=""
+        MD_FILE="tf-report.md"
+        if [[ -f "$MD_FILE" ]]; then
+          # Check for errors
+          ERRORS=$(grep -E '^### ❌ Error in' "$MD_FILE" || true)
+          if [[ -n "$ERRORS" ]]; then
+            COMMENT_BODY+="### 🚨 Terraform Errors Detected"$'\n\n'
+            COMMENT_BODY+=$(echo "$ERRORS" | sed 's/### ❌ Error in/❌/g')
+            COMMENT_BODY+=$'\n\n'
+          fi
+
+          # Get summary
+          SUMMARY=$(awk '/## Summary/{flag=1;next}/## Detailed Changes/{flag=0}flag' "$MD_FILE")
+          if [[ -n "$SUMMARY" ]]; then
+            COMMENT_BODY+="### ${ACTION_TITLE} Summary"$'\n'
+            COMMENT_BODY+="$SUMMARY"
+          fi
+        else
+          COMMENT_BODY="Could not find the Terraform report file."
+        fi
+
+        # Add link to job summary
+        JOB_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        COMMENT_BODY+=$'\n\n'
+        COMMENT_BODY+="[View Full Report in Job Summary](${JOB_URL})"
+
+        echo "comment_body<<EOF" >> "$GITHUB_OUTPUT"
+        printf '%s\n' "$COMMENT_BODY" >> "$GITHUB_OUTPUT"
+        echo "EOF" >> "$GITHUB_OUTPUT"
+      working-directory: ${{ inputs.working-directory }}
+      
+    - name: Comment Terraform Output on PR
+      if: always() && steps.tf_comment_prep.outcome == 'success' && github.event_name == 'pull_request'
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v6
+      env:
+        COMMENT_BODY: ${{ steps.tf_comment_prep.outputs.comment_body }}
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const issue_number = context.issue.number;
+          if (!issue_number) {
+            console.log('Could not determine PR number.');
+            return;
+          }
+
+          const comment_title = `### Terraform ${{ inputs.action }} for \`${{ inputs.working-directory }}\` in \`${{ inputs.environment }}_${{ inputs.region }}\``;
+          const comment_body = `${comment_title}
+
+          ${process.env.COMMENT_BODY}`
+
+          const since_date = new Date();
+          since_date.setDate(since_date.getDate() - 3);
+
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: issue_number,
+            since: since_date.toISOString(),
+            sort: 'updated',
+            direction: 'desc'
+          });
+
+          const bot_comment = comments.find(comment => {
+            return comment.user.login === 'github-actions[bot]' && comment.body.startsWith(comment_title)
+          });
+
+          if (bot_comment) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: bot_comment.id,
+              body: comment_body
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue_number,
+              body: comment_body
+            });
+          }

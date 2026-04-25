@@ -1,0 +1,229 @@
+name: Deploy Website (reusable workflow)
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'The target environment/workspace to be used (dev, stg, prod)'
+        type: string
+        default: 'dev'
+      region:
+        description: 'The region available for the environment in AWS format embedded as a string, if applicable, i.e.: "us-west-2"'
+        type: string
+        default: 'global'
+      working-directory:
+        description: 'The location containing the files to be synced to S3'
+        type: string
+        default: 'website'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ENV_NAME: ${{ inputs.environment }}
+  AWS_REGION: ${{ inputs.region == 'global' && 'eu-central-1' || inputs.region }}
+
+jobs:
+  repo_details:
+    name: Get repository details
+    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    outputs:
+      repo-name: ${{ steps.repo_details.outputs.repo-name }}
+      repo-url: ${{ steps.repo_details.outputs.repo-url }}
+    steps:
+    - name: Set branch names
+      id: repo_details
+      uses: faccomichele-org/gha-reusables/.github/actions/get-repo-details@main
+
+  deploy_website:
+    name: Deploy Website (${{ inputs.environment }}_${{ inputs.region }})
+    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    needs: [repo_details]
+    env:
+      REPO_NAME: ${{ needs.repo_details.outputs.repo-name }}
+    steps:
+    - name: Get source code locally from this repo
+      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+    - name: Download Terraform output artifact
+      uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+      with:
+        pattern: terraform-output-${{ inputs.environment }}-${{ inputs.region }}-*-${{ github.run_id }}
+        path: /tmp/terraform-output
+        merge-multiple: true
+
+    - name: Parse Terraform outputs and perform replacements
+      id: process_outputs
+      shell: bash
+      run: |
+        # Read terraform output JSON
+        TF_OUTPUT_FILE="/tmp/terraform-output/tf-output.json"
+        
+        if [ ! -f "$TF_OUTPUT_FILE" ]; then
+          echo "Error: Terraform output file not found at $TF_OUTPUT_FILE"
+          exit 1
+        fi
+        
+        echo "Processing Terraform outputs..."
+        
+        # Extract all output keys and values
+        OUTPUT_KEYS=$(jq -r 'keys[]' "$TF_OUTPUT_FILE")
+        
+        # Create a temporary script for all replacements
+        REPLACE_SCRIPT="/tmp/replace_outputs.sh"
+        cat > "$REPLACE_SCRIPT" << 'EOFSCRIPT'
+        #!/bin/bash
+        set -e
+        
+        TF_OUTPUT_FILE="$1"
+        WORKING_DIR="$2"
+        
+        # Function to perform sed replacement
+        perform_replacement() {
+          local key=$1
+          local value=$2
+          local pattern="__${key}__"
+          
+          # Skip if value is a multi-line string (would break sed command)
+          if [[ "$value" == *$'\n'* ]]; then
+            echo "Note: Skipping replacement of $pattern: value is a multi-line string (not compatible with sed)"
+            return
+          fi
+          
+          echo "Replacing $pattern with $value"
+          
+          # Find all files in working directory (excluding .git and hidden files)
+          find "$WORKING_DIR" -type f ! -path "*/.git/*" ! -path "*/.*" -print0 | while IFS= read -r -d '' file; do
+            # Skip binary files
+            if file "$file" | grep -q "text"; then
+              # Perform in-place replacement
+              sed -i "s|${pattern}|${value}|g" "$file"
+            fi
+          done
+        }
+        
+        # Process each output
+        while IFS= read -r key; do
+          value=$(jq -r --arg key "$key" '.[$key].value' "$TF_OUTPUT_FILE")
+          
+          # Handle different value types
+          if [ "$value" != "null" ] && [ -n "$value" ]; then
+            perform_replacement "$key" "$value"
+          fi
+        done < <(jq -r 'keys[]' "$TF_OUTPUT_FILE")
+        
+        echo "All replacements completed successfully"
+        EOFSCRIPT
+        
+        chmod +x "$REPLACE_SCRIPT"
+        
+        # Execute the replacement script
+        "$REPLACE_SCRIPT" "$TF_OUTPUT_FILE" "${{ inputs.working-directory }}"
+        
+        # Extract specific outputs needed for AWS operations
+        WEBSITE_BUCKET=$(jq -r '.website_bucket_name.value // empty' "$TF_OUTPUT_FILE")
+        CLOUDFRONT_ID=$(jq -r '.cloudfront_distribution_id.value // empty' "$TF_OUTPUT_FILE")
+        
+        echo "website_bucket=$WEBSITE_BUCKET" >> $GITHUB_OUTPUT
+        echo "cloudfront_id=$CLOUDFRONT_ID" >> $GITHUB_OUTPUT
+        
+        echo "Extracted outputs:"
+        echo "  Website bucket: $WEBSITE_BUCKET"
+        echo "  CloudFront distribution ID: $CLOUDFRONT_ID"
+
+    - name: Custom AWS Login
+      uses: faccomichele-org/gha-reusables/.github/actions/custom-aws-login@main
+      with:
+        dev_account: ${{ secrets.DEV_AWS_ID }}
+        stg_account: ${{ secrets.STG_AWS_ID }}
+        prod_account: ${{ secrets.PROD_AWS_ID }}
+        dev_role_secret: ${{ secrets.DEV_ROLE_SECRET }}
+        stg_role_secret: ${{ secrets.STG_ROLE_SECRET }}
+        prod_role_secret: ${{ secrets.PROD_ROLE_SECRET }}
+
+    - name: Sync files to S3 and capture changed paths
+      id: s3_sync
+      shell: bash
+      run: |
+        BUCKET="${{ steps.process_outputs.outputs.website_bucket }}"
+        
+        if [ -z "$BUCKET" ]; then
+          echo "Error: website_bucket_name not found in Terraform outputs"
+          exit 1
+        fi
+        
+        # Create a temporary file to store sync output
+        SYNC_OUTPUT="/tmp/s3-sync-output.txt"
+        
+        echo "Syncing ${{ inputs.working-directory }}/ to s3://$BUCKET/"
+        
+        # Run S3 sync and capture output
+        aws s3 sync "${{ inputs.working-directory }}/" "s3://$BUCKET/" \
+          --delete \
+          --cache-control "max-age=3600" \
+          --no-progress \
+          2>&1 | tee "$SYNC_OUTPUT"
+        
+        # Extract the paths that were uploaded/deleted
+        # S3 sync outputs lines like: "upload: file.html to s3://bucket/file.html"
+        # or "delete: s3://bucket/file.html"
+        # We need to extract just the S3 paths
+        CHANGED_PATHS=""
+        
+        if [ -f "$SYNC_OUTPUT" ]; then
+          # Extract paths from upload operations
+          UPLOAD_PATHS=$(grep "upload:" "$SYNC_OUTPUT" | sed -E 's/.*to s3:\/\/[^\/]+//' || true)
+          # Extract paths from delete operations
+          DELETE_PATHS=$(grep "delete:" "$SYNC_OUTPUT" | sed -E 's/.*delete: s3:\/\/[^\/]+//' || true)
+          # Combine both
+          CHANGED_PATHS=$(printf "%s\n%s" "$UPLOAD_PATHS" "$DELETE_PATHS" | grep -v '^$' || true)
+        fi
+        
+        # If no specific paths were found, default to invalidating everything
+        if [ -z "$CHANGED_PATHS" ]; then
+          echo "No specific paths detected, will invalidate all"
+          echo "invalidate_all=true" >> $GITHUB_OUTPUT
+        else
+          echo "invalidate_all=false" >> $GITHUB_OUTPUT
+          
+          # Save paths to a file
+          echo "$CHANGED_PATHS" > /tmp/changed-paths.txt
+          
+          echo "Changed paths:"
+          cat /tmp/changed-paths.txt
+        fi
+
+    - name: Create CloudFront invalidation
+      if: steps.process_outputs.outputs.cloudfront_id != ''
+      shell: bash
+      run: |
+        DISTRIBUTION_ID="${{ steps.process_outputs.outputs.cloudfront_id }}"
+        
+        if [ -z "$DISTRIBUTION_ID" ]; then
+          echo "Warning: CloudFront distribution ID not found, skipping invalidation"
+          exit 0
+        fi
+        
+        # Determine paths to invalidate
+        if [ "${{ steps.s3_sync.outputs.invalidate_all }}" == "true" ] || [ ! -f /tmp/changed-paths.txt ]; then
+          PATHS="/*"
+          echo "Creating CloudFront invalidation for all paths: $PATHS"
+        else
+          # Read changed paths and format for CloudFront
+          PATHS=$(cat /tmp/changed-paths.txt | tr '\n' ' ')
+          
+          # If paths is empty or just whitespace, invalidate all
+          if [ -z "$(echo "$PATHS" | tr -d '[:space:]')" ]; then
+            PATHS="/*"
+          fi
+          
+          echo "Creating CloudFront invalidation for paths: $PATHS"
+        fi
+        
+        # Create the invalidation
+        aws cloudfront create-invalidation \
+          --distribution-id "$DISTRIBUTION_ID" \
+          --paths $PATHS
+        
+        echo "CloudFront invalidation created successfully"

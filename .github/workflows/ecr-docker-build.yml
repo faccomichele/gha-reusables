@@ -1,0 +1,269 @@
+name: ECR Docker Build (reusable workflow)
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'The directory containing subdirectories with Dockerfiles'
+        type: string
+        default: '.'
+      environment:
+        description: 'The target environment (dev, stg, prod)'
+        type: string
+      region:
+        description: 'The AWS region for ECR (e.g., "us-west-2")'
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ENV_NAME: ${{ inputs.environment }}
+  AWS_REGION: ${{ inputs.region }}
+
+jobs:
+  repo_details:
+    name: Get repository details
+    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    outputs:
+      repo-name: ${{ steps.repo_details.outputs.repo-name }}
+      repo-url: ${{ steps.repo_details.outputs.repo-url }}
+    steps:
+    - name: Set branch names
+      id: repo_details
+      uses: faccomichele-org/gha-reusables/.github/actions/get-repo-details@main
+
+  detect_dockerfiles:
+    name: Detect Dockerfiles - (${{ inputs.working-directory }})
+    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+      has_dockerfiles: ${{ steps.detect.outputs.has_dockerfiles }}
+      date_tag: ${{ steps.detect.outputs.date_tag }}
+    steps:
+    - name: Get source code locally from this repo
+      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+    - name: Detect Dockerfiles in subdirectories
+      id: detect
+      shell: bash
+      run: |
+        DOCKERFILES='[]'
+        HAS_DOCKERFILES='false'
+        
+        # Generate date tag once for all images in this workflow run
+        DATE_TAG=$(date -u +'%Y.%m.%d')
+        echo "date_tag=$DATE_TAG" >> $GITHUB_OUTPUT
+        
+        # Check if working directory exists
+        if [ ! -d "${{ inputs.working-directory }}" ]; then
+          echo "Working directory ${{ inputs.working-directory }} does not exist"
+          echo "matrix=$DOCKERFILES" >> $GITHUB_OUTPUT
+          echo "has_dockerfiles=$HAS_DOCKERFILES" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        cd "${{ inputs.working-directory }}"
+        
+        # Enable nullglob to handle case when no directories exist
+        shopt -s nullglob
+        
+        # Find all subdirectories (one level deep)
+        for dir in */; do
+          # Remove trailing slash
+          dir=${dir%/}
+          
+          # Skip if not a directory
+          if [ ! -d "$dir" ]; then
+            continue
+          fi
+          
+          # Check for Dockerfile in the subdirectory
+          if [ -f "$dir/Dockerfile" ]; then
+            HAS_DOCKERFILES='true'
+            DOCKERFILES=$(echo "$DOCKERFILES" | jq -c ". += [{\"folder\": \"$dir\"}]")
+            echo "Detected Dockerfile in: $dir"
+          fi
+        done
+        
+        echo "matrix=$DOCKERFILES" >> $GITHUB_OUTPUT
+        echo "has_dockerfiles=$HAS_DOCKERFILES" >> $GITHUB_OUTPUT
+        echo "Detected dockerfiles matrix: $DOCKERFILES"
+
+  build_and_push:
+    name: Build ${{ matrix.dockerfile.folder }} (${{ inputs.environment }}_${{ inputs.region }})
+    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    needs: [detect_dockerfiles, repo_details]
+    if: needs.detect_dockerfiles.outputs.has_dockerfiles == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile: ${{ fromJson(needs.detect_dockerfiles.outputs.matrix) }}
+    env:
+      REPO_NAME: ${{ needs.repo_details.outputs.repo-name }}
+      REPO_URL: ${{ needs.repo_details.outputs.repo-url }}
+    steps:
+    - name: Get source code locally from this repo
+      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
+
+    - name: Custom AWS Login
+      uses: faccomichele-org/gha-reusables/.github/actions/custom-aws-login@main
+      with:
+        dev_account: ${{ secrets.DEV_AWS_ID }}
+        stg_account: ${{ secrets.STG_AWS_ID }}
+        prod_account: ${{ secrets.PROD_AWS_ID }}
+        dev_role_secret: ${{ secrets.DEV_ROLE_SECRET }}
+        stg_role_secret: ${{ secrets.STG_ROLE_SECRET }}
+        prod_role_secret: ${{ secrets.PROD_ROLE_SECRET }}
+
+    - name: Login to Amazon ECR
+      id: login_ecr
+      uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
+
+    - name: Determine ECR registry and repository
+      id: ecr_info
+      shell: bash
+      run: |
+        # Use VARS.ECR_REGISTRY if provided, otherwise use the account from login
+        if [ -n "${{ vars.ECR_REGISTRY }}" ]; then
+          ECR_REGISTRY="${{ vars.ECR_REGISTRY }}"
+        else
+          ECR_REGISTRY="${{ steps.login_ecr.outputs.registry }}"
+        fi
+
+        echo "registry=$ECR_REGISTRY" | tee -a $GITHUB_OUTPUT
+
+        # Use folder name as image name
+        IMAGE_NAME="${REPO_NAME}-${{ matrix.dockerfile.folder }}-${ENV_NAME}"
+        
+        # Construct full image name
+        FULL_IMAGE_NAME="${ECR_REGISTRY}/${IMAGE_NAME}"
+        echo "image_name=$IMAGE_NAME" | tee -a $GITHUB_OUTPUT
+        echo "full_image_name=$FULL_IMAGE_NAME" | tee -a $GITHUB_OUTPUT
+
+        echo "ECR Registry: $ECR_REGISTRY"
+        echo "Image Name: $IMAGE_NAME"
+        echo "Full Image Name: $FULL_IMAGE_NAME"
+
+    - name: Create ECR repository if it doesn't exist
+      shell: bash
+      run: |
+        # Check if repository exists, create if not
+        if ! aws ecr describe-repositories --repository-names ${{ steps.ecr_info.outputs.image_name }} --region ${{ inputs.region }} 2>/dev/null; then
+          echo "Repository ${{ steps.ecr_info.outputs.image_name }} does not exist, creating..."
+          aws ecr create-repository \
+            --repository-name ${{ steps.ecr_info.outputs.image_name }} \
+            --region ${{ inputs.region }} \
+            --image-scanning-configuration scanOnPush=true \
+            --tags Key=Project,Value=${{ env.REPO_NAME }} \
+                   Key=Environment,Value=${{ inputs.environment }} \
+                   Key=ManagedBy,Value=GitHubActions \
+                   Key=RepositoryURL,Value=${{ env.REPO_URL }}
+          echo "Repository created successfully"
+        else
+          echo "Repository ${{ steps.ecr_info.outputs.image_name }} already exists"
+        fi
+
+    - name: Generate image tags
+      id: tags
+      shell: bash
+      run: |
+        # Use date tag from detection job to ensure consistency across all matrix builds
+        DATE_TAG="${{ needs.detect_dockerfiles.outputs.date_tag }}"
+        
+        # Get commit SHA (full)
+        COMMIT_SHA="${{ github.sha }}"
+        
+        # Full image name
+        FULL_IMAGE="${{ steps.ecr_info.outputs.full_image_name }}"
+        
+        # Create comma-separated tags list
+        TAGS="${FULL_IMAGE}:latest,${FULL_IMAGE}:${DATE_TAG},${FULL_IMAGE}:${COMMIT_SHA}"
+        
+        echo "tags=$TAGS" | tee -a $GITHUB_OUTPUT
+        echo "date_tag=$DATE_TAG" | tee -a $GITHUB_OUTPUT
+        echo "commit_tag=$COMMIT_SHA" | tee -a $GITHUB_OUTPUT
+        
+        echo "Generated tags:"
+        echo "  - latest"
+        echo "  - ${DATE_TAG}"
+        echo "  - ${COMMIT_SHA}"
+
+    - name: Prepare build arguments
+      id: build_args
+      shell: bash
+      run: |
+        BUILD_ARGS=""
+
+        # Add build args from VARS if provided
+        if [ -n "${{ vars.DOCKER_BUILD_ARGS }}" ]; then
+          # Parse comma-separated build args from VARS
+          IFS=',' read -ra ARGS <<< "${{ vars.DOCKER_BUILD_ARGS }}"
+          for arg in "${ARGS[@]}"; do
+            if [ -n "$BUILD_ARGS" ]; then
+              BUILD_ARGS="${BUILD_ARGS}"$'\n'"${arg}"
+            else
+              BUILD_ARGS="${arg}"
+            fi
+          done
+        fi
+
+        # Add standard build metadata with newline separation
+        if [ -n "$BUILD_ARGS" ]; then
+          BUILD_ARGS="${BUILD_ARGS}"$'\n'
+        fi
+        BUILD_ARGS="${BUILD_ARGS}BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+        BUILD_ARGS="${BUILD_ARGS}"$'\n'"VCS_REF=${{ github.sha }}"
+        BUILD_ARGS="${BUILD_ARGS}"$'\n'"VERSION=${{ github.ref_name }}"
+        BUILD_ARGS="${BUILD_ARGS}"$'\n'"ENVIRONMENT=${{ inputs.environment }}"
+
+        # Use heredoc to properly handle multiline output
+        {
+          echo "args<<EOF"
+          echo "$BUILD_ARGS"
+          echo "EOF"
+        } >> $GITHUB_OUTPUT
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6.9.0
+      with:
+        context: ${{ inputs.working-directory }}/${{ matrix.dockerfile.folder }}
+        file: ${{ inputs.working-directory }}/${{ matrix.dockerfile.folder }}/Dockerfile
+        push: true
+        tags: ${{ steps.tags.outputs.tags }}
+        build-args: ${{ steps.build_args.outputs.args }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        provenance: false
+
+    - name: Parse and display image tags
+      shell: bash
+      run: |
+        echo "### Docker Image Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Repository:** ${{ steps.ecr_info.outputs.image_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Registry:** ${{ steps.ecr_info.outputs.registry }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Region:** ${{ inputs.region }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Environment:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Tags Applied:**" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "latest" >> $GITHUB_STEP_SUMMARY
+        echo "${{ steps.tags.outputs.date_tag }}" >> $GITHUB_STEP_SUMMARY
+        echo "${{ steps.tags.outputs.commit_tag }}" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Build completed successfully** ✅" >> $GITHUB_STEP_SUMMARY
+
+    - name: Output image details
+      shell: bash
+      run: |
+        echo "Image URI: ${{ steps.ecr_info.outputs.full_image_name }}:latest"
+        echo "Available tags:"
+        echo "  - latest"
+        echo "  - ${{ steps.tags.outputs.date_tag }}"
+        echo "  - ${{ steps.tags.outputs.commit_tag }}"

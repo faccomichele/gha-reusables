@@ -1,0 +1,19 @@
+name: 'Get Repo Details'
+description: 'Composite action that outputs repository name and URL.'
+outputs:
+  repo-name:
+    description: 'Repository name (owner/repo -> repo)'
+    value: ${{ steps.repo.outputs.repo-name }}
+  repo-url:
+    description: 'Repository URL (https)'
+    value: ${{ steps.repo.outputs.repo-url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set repo outputs
+      id: repo
+      shell: bash
+      run: |
+        echo "repo-name=$(echo ${{ github.repository }} | cut -d '/' -f2)" >> $GITHUB_OUTPUT
+        echo "repo-url=$(echo ${{ github.repositoryUrl }} | sed 's/git:/https:/g' | sed 's/.git$//g')" >> $GITHUB_OUTPUT
