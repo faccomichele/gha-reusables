@@ -23,6 +23,10 @@ on:
         description: 'The location containing the terraform related files'
         type: string
         default: '.'
+      lambda-working-directory:
+        description: 'The location containing the lambda related files to be uploaded to S3 for use in Terraform'
+        type: string
+        default: './lambdas'
       upload-output-artifact:
         description: 'Optional: If true, upload the terraform output artifact from the current workflow run, otherwise it skips it.'
         type: boolean
@@ -81,11 +85,28 @@ jobs:
     - name: Download lambda artifacts from S3 if existing
       shell: bash
       continue-on-error: true
+      env:
+        WORKINGDIR: ${{ inputs.lambda-working-directory }}
       run: |
-        mkdir -p "${{ inputs.working-directory }}/lambda"
-        aws s3 sync "s3://${{ vars.SHARED_ARTIFACTS_S3_BUCKET }}-${{ secrets.SHARED_ARTIFACTS_S3_BUCKET_ACCOUNT_ID }}/${REPO_NAME}/${ENV_NAME}/lambdas/" \
-          "${{ inputs.working-directory }}/lambda/" --no-progress
-        echo "Lambda packages downloaded from s3://${{ vars.SHARED_ARTIFACTS_S3_BUCKET }}-${{ secrets.SHARED_ARTIFACTS_S3_BUCKET_ACCOUNT_ID }}/${REPO_NAME}/${ENV_NAME}/lambdas/"
+        # Normalize variables
+        BASE_WORKDIR="${{ inputs.working-directory }}"
+        WD="${WORKINGDIR%/}"
+        BASE="${BASE_WORKDIR%/}"
+
+        STRIPPED_WORKDIR="$WD"
+        # If base is not just '.' and WD starts with BASE, strip the BASE prefix
+        if [[ -n "$BASE" && "$BASE" != "." && ("$WD" == "$BASE" || "$WD" == "$BASE"/*) ]]; then
+          STRIPPED_WORKDIR="${WD#${BASE}}"
+        fi
+
+        # Remove any leading './' or leading '/' left after stripping
+        STRIPPED_WORKDIR="${STRIPPED_WORKDIR#./}"
+        STRIPPED_WORKDIR="${STRIPPED_WORKDIR#/}"
+
+        mkdir -p "${WORKINGDIR}"
+        aws s3 sync "s3://${{ vars.SHARED_ARTIFACTS_S3_BUCKET }}-${{ secrets.SHARED_ARTIFACTS_S3_BUCKET_ACCOUNT_ID }}/${REPO_NAME}/${ENV_NAME}/${STRIPPED_WORKDIR}/" \
+          "${WORKINGDIR}/" --no-progress
+        echo "Lambda packages downloaded from s3://${{ vars.SHARED_ARTIFACTS_S3_BUCKET }}-${{ secrets.SHARED_ARTIFACTS_S3_BUCKET_ACCOUNT_ID }}/${REPO_NAME}/${ENV_NAME}/${STRIPPED_WORKDIR}/"
 
     - name: Retrieve central account and role secret from SSM
       id: get_core_params

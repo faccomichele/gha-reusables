@@ -397,7 +397,10 @@ jobs:
 
     - name: Upload Lambda packages to S3
       shell: bash
+      env:
+        WORKINGDIR: ${{ inputs.working-directory }}
       run: |
-        aws s3 cp "${{ inputs.working-directory }}/" "s3://${{ vars.SHARED_ARTIFACTS_S3_BUCKET }}-${{ secrets.SHARED_ARTIFACTS_S3_BUCKET_ACCOUNT_ID }}/${REPO_NAME}/${ENV_NAME}/lambdas/" \
+        STRIPPED_WORKDIR="${WORKINGDIR#./}"
+        aws s3 cp "$WORKINGDIR/" "s3://${{ vars.SHARED_ARTIFACTS_S3_BUCKET }}-${{ secrets.SHARED_ARTIFACTS_S3_BUCKET_ACCOUNT_ID }}/${REPO_NAME}/${ENV_NAME}/${STRIPPED_WORKDIR}/" \
           --recursive --exclude "*" --include "*.zip" --no-progress
-        echo "Lambda packages uploaded to s3://${{ vars.SHARED_ARTIFACTS_S3_BUCKET }}-${{ secrets.SHARED_ARTIFACTS_S3_BUCKET_ACCOUNT_ID }}/${REPO_NAME}/${ENV_NAME}/lambdas/"
+        echo "Lambda packages uploaded to s3://${{ vars.SHARED_ARTIFACTS_S3_BUCKET }}-${{ secrets.SHARED_ARTIFACTS_S3_BUCKET_ACCOUNT_ID }}/${REPO_NAME}/${ENV_NAME}/${STRIPPED_WORKDIR}/"
