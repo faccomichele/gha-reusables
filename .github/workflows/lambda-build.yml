@@ -34,18 +34,18 @@ env:
 jobs:
   repo_details:
     name: Get repository details
-    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
     outputs:
       repo-name: ${{ steps.repo_details.outputs.repo-name }}
       repo-url: ${{ steps.repo_details.outputs.repo-url }}
     steps:
     - name: Set branch names
       id: repo_details
-      uses: faccomichele-org/gha-reusables/.github/actions/get-repo-details@main
+      uses: faccomichele-org/gha-composite-repo-details@v1
 
   detect_lambdas:
     name: Detect Lambda Functions - (${{ inputs.working-directory }})
-    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
     outputs:
       matrix: ${{ steps.detect.outputs.matrix }}
       has_lambdas: ${{ steps.detect.outputs.has_lambdas }}
@@ -209,7 +209,8 @@ jobs:
 
   build_lambdas:
     name: Build ${{ matrix.lambda.path }}${{ matrix.lambda.path != '' && '/' || '' }}${{ matrix.lambda.folder }} (${{ matrix.lambda.type }})
-    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
+    environment: ${{ inputs.environment }}
     if: needs.detect_lambdas.outputs.has_lambdas == 'true'
     strategy:
       fail-fast: false
@@ -221,14 +222,10 @@ jobs:
     steps:
     - name: Custom AWS Login
       id: aws_login
-      uses: faccomichele-org/gha-reusables/.github/actions/custom-aws-login@main
+      uses: faccomichele-org/gha-composite-custom-aws-login@v1
       with:
-        dev_account: ${{ secrets.DEV_AWS_ID }}
-        stg_account: ${{ secrets.STG_AWS_ID }}
-        prod_account: ${{ secrets.PROD_AWS_ID }}
-        dev_role_secret: ${{ secrets.DEV_ROLE_SECRET }}
-        stg_role_secret: ${{ secrets.STG_ROLE_SECRET }}
-        prod_role_secret: ${{ secrets.PROD_ROLE_SECRET }}
+        account_id: ${{ secrets.ACCOUNT_ID }}
+        role_secret: ${{ secrets.ROLE_SECRET }}
 
     - name: Get source code locally from this repo
       uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1

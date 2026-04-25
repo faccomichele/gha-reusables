@@ -13,6 +13,10 @@ on:
       region:
         description: 'The AWS region for ECR (e.g., "us-west-2")'
         type: string
+      push-to-ecr:
+        description: 'A switch that set when pushing the built image to ECR or not'
+        type: boolean
+        default: true
 
 permissions:
   id-token: write
@@ -25,18 +29,18 @@ env:
 jobs:
   repo_details:
     name: Get repository details
-    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
     outputs:
       repo-name: ${{ steps.repo_details.outputs.repo-name }}
       repo-url: ${{ steps.repo_details.outputs.repo-url }}
     steps:
     - name: Set branch names
       id: repo_details
-      uses: faccomichele-org/gha-reusables/.github/actions/get-repo-details@main
+      uses: faccomichele-org/gha-composite-repo-details@v1
 
   detect_dockerfiles:
     name: Detect Dockerfiles - (${{ inputs.working-directory }})
-    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
     outputs:
       matrix: ${{ steps.detect.outputs.matrix }}
       has_dockerfiles: ${{ steps.detect.outputs.has_dockerfiles }}
@@ -93,7 +97,8 @@ jobs:
 
   build_and_push:
     name: Build ${{ matrix.dockerfile.folder }} (${{ inputs.environment }}_${{ inputs.region }})
-    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
+    environment: ${{ inputs.environment }}
     needs: [detect_dockerfiles, repo_details]
     if: needs.detect_dockerfiles.outputs.has_dockerfiles == 'true'
     strategy:
@@ -111,18 +116,13 @@ jobs:
       uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
 
     - name: Custom AWS Login
-      uses: faccomichele-org/gha-reusables/.github/actions/custom-aws-login@main
-      with:
-        dev_account: ${{ secrets.DEV_AWS_ID }}
-        stg_account: ${{ secrets.STG_AWS_ID }}
-        prod_account: ${{ secrets.PROD_AWS_ID }}
-        dev_role_secret: ${{ secrets.DEV_ROLE_SECRET }}
-        stg_role_secret: ${{ secrets.STG_ROLE_SECRET }}
-        prod_role_secret: ${{ secrets.PROD_ROLE_SECRET }}
-
-    - name: Login to Amazon ECR
+      if: inputs.push-to-ecr
       id: login_ecr
-      uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
+      uses: faccomichele-org/gha-composite-custom-aws-login@v1
+      with:
+        account_id: ${{ secrets.ACCOUNT_ID }}
+        role_secret: ${{ secrets.ROLE_SECRET }}
+        ecr_login: true
 
     - name: Determine ECR registry and repository
       id: ecr_info
@@ -132,7 +132,7 @@ jobs:
         if [ -n "${{ vars.ECR_REGISTRY }}" ]; then
           ECR_REGISTRY="${{ vars.ECR_REGISTRY }}"
         else
-          ECR_REGISTRY="${{ steps.login_ecr.outputs.registry }}"
+          ECR_REGISTRY="${{ inputs.push-to-ecr && steps.login_ecr.outputs.registry || 'none' }}"
         fi
 
         echo "registry=$ECR_REGISTRY" | tee -a $GITHUB_OUTPUT
@@ -150,6 +150,7 @@ jobs:
         echo "Full Image Name: $FULL_IMAGE_NAME"
 
     - name: Create ECR repository if it doesn't exist
+      if: inputs.push-to-ecr
       shell: bash
       run: |
         # Check if repository exists, create if not
@@ -233,7 +234,7 @@ jobs:
       with:
         context: ${{ inputs.working-directory }}/${{ matrix.dockerfile.folder }}
         file: ${{ inputs.working-directory }}/${{ matrix.dockerfile.folder }}/Dockerfile
-        push: true
+        push: ${{ inputs.push-to-ecr }}
         tags: ${{ steps.tags.outputs.tags }}
         build-args: ${{ steps.build_args.outputs.args }}
         cache-from: type=gha

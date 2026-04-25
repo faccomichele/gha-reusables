@@ -43,18 +43,19 @@ env:
 jobs:
   repo_details:
     name: Get repository details
-    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
     outputs:
       repo-name: ${{ steps.repo_details.outputs.repo-name }}
       repo-url: ${{ steps.repo_details.outputs.repo-url }}
     steps:
     - name: Set branch names
       id: repo_details
-      uses: faccomichele-org/gha-reusables/.github/actions/get-repo-details@main
+      uses: faccomichele-org/gha-composite-repo-details@v1
 
   terraform_plan_apply:
     name: Run Terraform (${{ inputs.environment }}_${{ inputs.region }}) - (${{ inputs.working-directory }})
-    runs-on: ${{ vars.RUNNERS || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
+    environment: ${{ inputs.environment }}
     if: ${{ inputs.working-directory != '[]' }}
     needs: repo_details
     env:
@@ -63,19 +64,15 @@ jobs:
     steps:
     - name: Custom AWS Login
       id: aws_login
-      uses: faccomichele-org/gha-reusables/.github/actions/custom-aws-login@main
+      uses: faccomichele-org/gha-composite-custom-aws-login@v1
       with:
-        dev_account: ${{ secrets.DEV_AWS_ID }}
-        stg_account: ${{ secrets.STG_AWS_ID }}
-        prod_account: ${{ secrets.PROD_AWS_ID }}
-        dev_role_secret: ${{ secrets.DEV_ROLE_SECRET }}
-        stg_role_secret: ${{ secrets.STG_ROLE_SECRET }}
-        prod_role_secret: ${{ secrets.PROD_ROLE_SECRET }}
+        account_id: ${{ secrets.ACCOUNT_ID }}
+        role_secret: ${{ secrets.ROLE_SECRET }}
 
     - name: Get source code locally from this repo
       uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      # TO DO: Hardcode the script version once stable
+      # TO DO: Hardcode the script version once stable - Import it to ORG level once ready
     - name: Get the Terraform Report Script
       shell: bash
       run: wget -O tf_out_to_md.py https://raw.githubusercontent.com/faccomichele-org/gha-reusables/refs/heads/main/terraform/tf_out_to_md.py && chmod +x tf_out_to_md.py
