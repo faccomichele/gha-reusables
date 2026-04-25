@@ -3,16 +3,18 @@ name: ECR Docker Build (reusable workflow)
 on:
   workflow_call:
     inputs:
+      environment:
+        description: 'The target environment (dev, stg, prod), required when s3-bucket is provided'
+        type: string
+        required: true
+      region:
+        description: 'AWS region for the S3 bucket'
+        type: string
+        required: true
       working-directory:
         description: 'The directory containing subdirectories with Dockerfiles'
         type: string
         default: '.'
-      environment:
-        description: 'The target environment (dev, stg, prod)'
-        type: string
-      region:
-        description: 'The AWS region for ECR (e.g., "us-west-2")'
-        type: string
       push-to-ecr:
         description: 'A switch that set when pushing the built image to ECR or not'
         type: boolean

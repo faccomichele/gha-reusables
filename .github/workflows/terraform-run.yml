@@ -4,13 +4,13 @@ on:
   workflow_call:
     inputs:
       environment:
-        description: 'The target environment/workspace to be used (dev, stg, prod)'
+        description: 'The target environment (dev, stg, prod), required when s3-bucket is provided'
         type: string
-        default: 'dev'
+        required: true
       region:
-        description: 'The region available for the environment in AWS format embedded as a string, if applicable, i.e.: \"us-west-2\"'
+        description: 'AWS region for the S3 bucket'
         type: string
-        default: 'global'
+        required: true
       validation_environment:
         description: 'Optional validation environment suffix (e.g., val1). When set, it is appended to Terraform workspace and Project tag.'
         type: string
