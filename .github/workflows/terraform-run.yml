@@ -258,8 +258,8 @@ jobs:
         ACTION: ${{ steps.options.outputs.action }}
         CONFIG_FILE: ${{ steps.options.outputs.config-file }}
         TAGS_VAR: ${{ steps.tags_var.outputs.value }}
-        DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-        GITHUB_TOKEN: ${{ secrets.GITHUB_PAT_TOKEN }}
+        TF_VAR_digitalocean_token: ${{ secrets.TF_VAR_DIGITALOCEAN_TOKEN }}
+        TF_VAR_github_token: ${{ secrets.TF_VAR_GITHUB_TOKEN }}
       run: terraform $ACTION -json -no-color ${CONFIG_FILE:+$CONFIG_FILE} -var="$TAGS_VAR" 2>&1 | tee tf-logs.json
       working-directory: ${{ inputs.working-directory }}
 
