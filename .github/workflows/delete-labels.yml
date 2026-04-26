@@ -1,0 +1,42 @@
+name: Delete All Labels (reusable workflow)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  labels: write
+
+jobs:
+  delete_labels:
+    name: Delete All Labels
+    runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
+    steps:
+    - name: Delete all labels
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v6
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const labels = await github.paginate(github.rest.issues.listLabelsForRepo, {
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            per_page: 100
+          });
+
+          if (labels.length === 0) {
+            core.info('No labels found, nothing to delete.');
+            return;
+          }
+
+          core.info(`Found ${labels.length} label(s) to delete.`);
+
+          for (const label of labels) {
+            await github.rest.issues.deleteLabel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: label.name
+            });
+            core.info(`Deleted label: ${label.name}`);
+          }
+
+          core.info('All labels deleted successfully.');
