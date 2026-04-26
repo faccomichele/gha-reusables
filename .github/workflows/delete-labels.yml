@@ -5,7 +5,7 @@ on:
 
 permissions:
   contents: read
-  labels: write
+  issues: write
 
 jobs:
   delete_labels:
