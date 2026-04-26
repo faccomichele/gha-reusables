@@ -165,9 +165,9 @@ jobs:
         unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN || true
       
     - name: Configure Terraform
-      uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # 3.1.2
+      uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # 4.0.0
       with:
-        terraform_version:  ${{ vars.TF_VERSION || '1.14.3' }}
+        terraform_version:  ${{ vars.TF_VERSION || '1.14.9' }}
         terraform_wrapper: false
 
     - name: Init Terraform
@@ -290,7 +290,7 @@ jobs:
 
     - name: Upload Terraform JSON outputs artifact
       if: inputs.upload-output-artifact
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 
       with:
         name: terraform-output-${{ inputs.environment }}-${{ inputs.region }}-${{ steps.wd_name.outputs.name }}-${{ github.run_id }}
         path: ${{ inputs.working-directory }}/tf-output.json
@@ -342,7 +342,7 @@ jobs:
       
     - name: Comment Terraform Output on PR
       if: always() && steps.tf_comment_prep.outcome == 'success' && github.event_name == 'pull_request'
-      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v6
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         COMMENT_BODY: ${{ steps.tf_comment_prep.outputs.comment_body }}
       with:
