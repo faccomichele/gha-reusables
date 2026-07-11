@@ -39,7 +39,7 @@ jobs:
     steps:
     - name: Set branch names
       id: repo_details
-      uses: faccomichele-org/gha-composite-repo-details@v1
+      uses: faccomichele/gha-composite-repo-details@v1
 
   detect_lambdas:
     name: Detect Lambda Functions - (${{ inputs.working-directory }})
@@ -220,7 +220,7 @@ jobs:
     steps:
     - name: Custom AWS Login
       id: aws_login
-      uses: faccomichele-org/gha-composite-custom-aws-login@v1
+      uses: faccomichele/gha-composite-custom-aws-login@v1
       with:
         account_id: ${{ secrets.ACCOUNT_ID }}
         role_secret: ${{ secrets.ROLE_SECRET }}
