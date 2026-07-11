@@ -7,6 +7,10 @@ on:
         description: 'The target environment (dev, stg, prod), required when s3-bucket is provided'
         type: string
         required: true
+      environment-prefix:
+        description: 'Optional prefix for the environment name (e.g., "myorg-"). When set, it is prepended to the environment name and used in the Terraform workspace and Project tag.'
+        type: string
+        default: ''
       region:
         description: 'AWS region for the S3 bucket'
         type: string
@@ -59,7 +63,7 @@ jobs:
   terraform_plan_apply:
     name: Run Terraform (${{ inputs.environment }}_${{ inputs.region }}) - (${{ inputs.working-directory }})
     runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
-    environment: ${{ inputs.environment }}
+    environment: ${{ inputs.environment-prefix != '' && format('{0}-{1}', inputs.environment-prefix, inputs.environment) || inputs.environment }}
     if: ${{ inputs.working-directory != '[]' }}
     needs: repo_details
     env:
@@ -123,12 +127,14 @@ jobs:
     
     - name: Get S3 Backend configuration for storing shared state files
       shell: bash
+      env:
+          ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
       run: |
         cat > s3backend.tf << EOF
         terraform {
           backend "s3" {
             bucket        = "terraform-core-aws-state-files-${ENV_NAME}-${{ steps.get_core_params.outputs.core_account }}"
-            key           = "${REPO_NAME}/terraform.tfstate"
+            key           = "${ACCOUNT_ID}/${REPO_NAME}/terraform.tfstate"
             region        = "${TF_STATE_SSM_REGION}"
             assume_role   = {
               role_arn    = "arn:aws:iam::${{ steps.get_core_params.outputs.core_account }}:role/terraform-core-backend-setup-${ENV_NAME}-TfStateRole-${{ steps.get_core_params.outputs.core_role_secret }}"
