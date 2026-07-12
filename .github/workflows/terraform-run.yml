@@ -138,7 +138,7 @@ jobs:
         cat > s3backend.tf << EOF
         terraform {
           backend "s3" {
-            bucket        = "terraform-core-aws-state-files-${ENV_NAME}-${{ steps.get_core_params.outputs.core_account }}"
+            bucket        = "aws-terraform-core-state-files-${ENV_NAME}-${{ steps.get_core_params.outputs.core_account }}"
             key           = "${ACCOUNT_ID}/${REPO_NAME}/terraform.tfstate"
             region        = "${TF_STATE_SSM_REGION}"
             assume_role   = {
