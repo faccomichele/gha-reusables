@@ -232,10 +232,10 @@ jobs:
           \"RepositoryFile\": \"main.tf\"
         }""" | jq -c)
         if [[ "${{ vars.EKS_CLUSTER }}" != "" ]]; then
-          TAGS=$(echo $TAGS "{\"EKS Cluster\": \"${{ vars.EKS_CLUSTER }}\"}" | jq -sc '.[0] * .[1]')
+          TAGS=$(echo $TAGS "{\"EKSCluster\": \"${{ vars.EKS_CLUSTER }}\"}" | jq -sc '.[0] * .[1]')
         fi
         if [[ "${{ vars.ECS_CLUSTER }}" != "" ]]; then
-          TAGS=$(echo $TAGS "{\"ECS Cluster\": \"${{ vars.ECS_CLUSTER }}\"}" | jq -sc '.[0] * .[1]')
+          TAGS=$(echo $TAGS "{\"ECSCluster\": \"${{ vars.ECS_CLUSTER }}\"}" | jq -sc '.[0] * .[1]')
         fi
         echo "value=tags=$TAGS" | tee -a $GITHUB_OUTPUT
       id: tags_var
