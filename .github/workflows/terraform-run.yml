@@ -254,6 +254,9 @@ jobs:
         if [[ -f config/${{ steps.workspace.outputs.name }}.tfvars ]]; then
           CONFIGFILE='-var-file=config/${{ steps.workspace.outputs.name }}.tfvars'
         fi
+        if [[ -n "${{ inputs.environment-prefix }}" && -f config/${{ inputs.environment-prefix }}/${{ steps.workspace.outputs.name }}.tfvars ]]; then
+          CONFIGFILE='-var-file=config/${{ inputs.environment-prefix }}/${{ steps.workspace.outputs.name }}.tfvars'
+        fi
         echo "config-file=$CONFIGFILE" | tee -a $GITHUB_OUTPUT
       working-directory: ${{ inputs.working-directory }}
 
