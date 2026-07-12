@@ -51,7 +51,6 @@ env:
   AWS_REGION: ${{ inputs.region }}
   TERRAFORM_REGION: ${{ inputs.global && 'global' || inputs.region }}
   VALIDATION_ENVIRONMENT: ${{ inputs.validation_environment }}
-  TF_STATE_SSM_REGION: ${{ vars.TF_STATE_SSM_REGION || inputs.region }}
 
 jobs:
   repo_details:
@@ -121,15 +120,16 @@ jobs:
       id: get_core_params
       shell: bash
       run: |
-        echo "Retrieving SSM parameters from region ${TF_STATE_SSM_REGION}..."
-        CORE_ACCOUNT=$(aws ssm get-parameter --name "/terraform-core/global/central-account/account-id" --with-decryption --region "$TF_STATE_SSM_REGION" --query Parameter.Value --output text)
-        CORE_ROLE_SECRET=$(aws ssm get-parameter --name "/terraform-core/${ENV_NAME}/terraform/state-file/role-secret" --with-decryption --region "$TF_STATE_SSM_REGION" --query Parameter.Value --output text)
+        echo "Retrieving SSM parameters from region ${AWS_REGION}..."
+        CORE_ACCOUNT=$(aws ssm get-parameter --name "/terraform-core/global/central-account/account-id" --with-decryption --query Parameter.Value --output text)
+        CORE_ROLE_SECRET=$(aws ssm get-parameter --name "/terraform-core/${ENV_NAME}/terraform/state-file/role-secret" --with-decryption --query Parameter.Value --output text)
+        CORE_BUCKET_REGION=$(aws ssm get-parameter --name "/terraform-core/${ENV_NAME}/terraform/state-file/bucket-region" --with-decryption --query Parameter.Value --output text)
         # Mask values in GitHub Actions logs
         echo "::add-mask::$CORE_ACCOUNT"
         echo "::add-mask::$CORE_ROLE_SECRET"
         echo "core_account=$CORE_ACCOUNT" | tee -a $GITHUB_OUTPUT
         echo "core_role_secret=$CORE_ROLE_SECRET" | tee -a $GITHUB_OUTPUT
-    
+        echo "core_bucket_region=$CORE_BUCKET_REGION" | tee -a $GITHUB_OUTPUT
     - name: Get S3 Backend configuration for storing shared state files
       shell: bash
       env:
@@ -140,7 +140,7 @@ jobs:
           backend "s3" {
             bucket        = "aws-terraform-core-state-files-${ENV_NAME}-${{ steps.get_core_params.outputs.core_account }}"
             key           = "${ACCOUNT_ID}/${REPO_NAME}/terraform.tfstate"
-            region        = "${TF_STATE_SSM_REGION}"
+            region        = "${{ steps.get_core_params.outputs.core_bucket_region }}"
             assume_role   = {
               role_arn    = "arn:aws:iam::${{ steps.get_core_params.outputs.core_account }}:role/terraform-core-backend-setup-${ENV_NAME}-TfStateRole-${{ steps.get_core_params.outputs.core_role_secret }}"
             }

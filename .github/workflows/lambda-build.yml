@@ -32,7 +32,6 @@ permissions:
 env:
   ENV_NAME: ${{ inputs.environment }}
   AWS_REGION: ${{ inputs.region }}
-  TF_STATE_SSM_REGION: ${{ vars.TF_STATE_SSM_REGION || inputs.region }}
 
 jobs:
   repo_details:
@@ -63,8 +62,8 @@ jobs:
       id: get_core_params
       shell: bash
       run: |
-        echo "Retrieving SSM parameters from region ${TF_STATE_SSM_REGION}..."
-        CORE_ACCOUNT=$(aws ssm get-parameter --name "/terraform-core/global/central-account/account-id" --with-decryption --region "$TF_STATE_SSM_REGION" --query Parameter.Value --output text)
+        echo "Retrieving SSM parameters from region ${AWS_REGION}..."
+        CORE_ACCOUNT=$(aws ssm get-parameter --name "/terraform-core/global/central-account/account-id" --with-decryption --query Parameter.Value --output text)
         # Mask values in GitHub Actions logs
         echo "::add-mask::$CORE_ACCOUNT"
         echo "core_account=$CORE_ACCOUNT" | tee -a $GITHUB_OUTPUT
