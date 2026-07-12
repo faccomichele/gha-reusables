@@ -122,8 +122,8 @@ jobs:
       shell: bash
       run: |
         echo "Retrieving SSM parameters from region ${TF_STATE_SSM_REGION}..."
-        CORE_ACCOUNT=$(aws ssm get-parameter --name "/manual/global/central-account/account-id" --with-decryption --region "$TF_STATE_SSM_REGION" --query Parameter.Value --output text)
-        CORE_ROLE_SECRET=$(aws ssm get-parameter --name "/manual/${ENV_NAME}/terraform/state-file/role-secret" --with-decryption --region "$TF_STATE_SSM_REGION" --query Parameter.Value --output text)
+        CORE_ACCOUNT=$(aws ssm get-parameter --name "/terraform-core/global/central-account/account-id" --with-decryption --region "$TF_STATE_SSM_REGION" --query Parameter.Value --output text)
+        CORE_ROLE_SECRET=$(aws ssm get-parameter --name "/terraform-core/${ENV_NAME}/terraform/state-file/role-secret" --with-decryption --region "$TF_STATE_SSM_REGION" --query Parameter.Value --output text)
         # Mask values in GitHub Actions logs
         echo "::add-mask::$CORE_ACCOUNT"
         echo "::add-mask::$CORE_ROLE_SECRET"
