@@ -15,6 +15,10 @@ on:
         description: 'AWS region for the S3 bucket'
         type: string
         required: true
+      global:
+        description: 'When true, Terraform treats the run as global (no region in workspace/varfile/terraform env), while AWS CLI still uses the provided region.'
+        type: boolean
+        default: false
       validation_environment:
         description: 'Optional validation environment suffix (e.g., val1). When set, it is appended to Terraform workspace and Project tag.'
         type: string
@@ -45,6 +49,7 @@ permissions:
 env:
   ENV_NAME: ${{ inputs.environment }}
   AWS_REGION: ${{ inputs.region }}
+  TERRAFORM_REGION: ${{ inputs.global && 'global' || inputs.region }}
   VALIDATION_ENVIRONMENT: ${{ inputs.validation_environment }}
   TF_STATE_SSM_REGION: ${{ vars.TF_STATE_SSM_REGION || inputs.region }}
 
@@ -195,12 +200,12 @@ jobs:
           VALIDATION_SUFFIX="_${VALIDATION_ENV_SANITIZED}"
         fi
         echo "validation-suffix=$VALIDATION_SUFFIX" | tee -a $GITHUB_OUTPUT
-        if [[ "${AWS_REGION}" == "global" ]]; then
+        if [[ "${TERRAFORM_REGION}" == "global" ]]; then
           echo "name=${ENV_NAME}${VALIDATION_SUFFIX}" | tee -a $GITHUB_OUTPUT
           echo "varfile=${ENV_NAME^^}_TF_VARS" | tee -a $GITHUB_OUTPUT
         else
-          echo "name=${ENV_NAME}_${AWS_REGION}${VALIDATION_SUFFIX}" | tee -a $GITHUB_OUTPUT
-          REGION_UNDERSCORE=${AWS_REGION//-/_}
+          echo "name=${ENV_NAME}_${TERRAFORM_REGION}${VALIDATION_SUFFIX}" | tee -a $GITHUB_OUTPUT
+          REGION_UNDERSCORE=${TERRAFORM_REGION//-/_}
           echo "varfile=${ENV_NAME^^}_${REGION_UNDERSCORE^^}_TF_VARS" | tee -a $GITHUB_OUTPUT
         fi
       id: workspace
@@ -214,6 +219,7 @@ jobs:
       shell: bash
       run: |
         PROJECT_NAME="${REPO_NAME}${{ steps.workspace.outputs.validation-suffix }}"
+        REGION_TAG_VALUE="${TERRAFORM_REGION}"
         TAGS=$(echo """{
           \"Project\": \"${PROJECT_NAME}\",
           \"RepositoryURL\": \"${REPO_URL}\",
@@ -221,7 +227,7 @@ jobs:
           \"Automation\": \"Terraform\",
           \"Organization\": \"${{ github.repository_owner }}\",
           \"ManagedBy\": \"Terraform\",
-          \"Region\": \"${AWS_REGION}\",
+          \"Region\": \"${REGION_TAG_VALUE}\",
           \"RepositoryPath\": \"${{ inputs.working-directory }}\",
           \"RepositoryFile\": \"main.tf\"
         }""" | jq -c)
@@ -264,6 +270,7 @@ jobs:
       id: tf_run
       shell: bash
       env:
+        AWS_REGION: ${{ inputs.global && '' || inputs.region }}
         ACTION: ${{ steps.options.outputs.action }}
         CONFIG_FILE: ${{ steps.options.outputs.config-file }}
         TAGS_VAR: ${{ steps.tags_var.outputs.value }}
