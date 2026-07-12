@@ -66,7 +66,7 @@ jobs:
       uses: faccomichele/gha-composite-repo-details@v1
 
   terraform_plan_apply:
-    name: Run Terraform (${{ inputs.environment }}_${{ inputs.region }}) - (${{ inputs.working-directory }})
+    name: ${{ format('Run Terraform ({0}{1}) - ({2})', inputs.environment-prefix != '' && format('{0}{1}', inputs.environment-prefix, inputs.environment) || inputs.environment, inputs.global && '' || format('-{0}', inputs.region), inputs.working-directory) }}
     runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
     environment: ${{ inputs.environment-prefix != '' && format('{0}-{1}', inputs.environment-prefix, inputs.environment) || inputs.environment }}
     if: ${{ inputs.working-directory != '[]' }}
@@ -113,9 +113,9 @@ jobs:
         STRIPPED_WORKDIR="${STRIPPED_WORKDIR#/}"
 
         mkdir -p "${WORKINGDIR}"
-        aws s3 sync "s3://${{ vars.SHARED_ARTIFACTS_S3_BUCKET }}-${{ secrets.SHARED_ARTIFACTS_S3_BUCKET_ACCOUNT_ID }}/${REPO_NAME}/${ENV_NAME}/${STRIPPED_WORKDIR}/" \
+        aws s3 sync "s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${{ secrets.SHARED_ARTIFACTS_S3_BUCKET_ACCOUNT_ID }}/${REPO_NAME}/${{ inputs.environment-prefix != '' && format('{0}/', inputs.environment-prefix) || '' }}${ENV_NAME}/${STRIPPED_WORKDIR}/" \
           "${WORKINGDIR}/" --no-progress
-        echo "Lambda packages downloaded from s3://${{ vars.SHARED_ARTIFACTS_S3_BUCKET }}-${{ secrets.SHARED_ARTIFACTS_S3_BUCKET_ACCOUNT_ID }}/${REPO_NAME}/${ENV_NAME}/${STRIPPED_WORKDIR}/"
+        echo "Lambda packages downloaded from s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${{ secrets.SHARED_ARTIFACTS_S3_BUCKET_ACCOUNT_ID }}/${REPO_NAME}/${{ inputs.environment-prefix != '' && format('{0}/', inputs.environment-prefix) || '' }}${ENV_NAME}/${STRIPPED_WORKDIR}/"
 
     - name: Retrieve central account and role secret from SSM
       id: get_core_params
