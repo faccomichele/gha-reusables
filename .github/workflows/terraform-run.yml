@@ -73,6 +73,8 @@ jobs:
     env:
       REPO_NAME: ${{ needs.repo_details.outputs.repo-name }}
       REPO_URL: ${{ needs.repo_details.outputs.repo-url }}
+      GH_APP_CLIENT_ID: ${{ secrets.GH_APP_CLIENT_ID }}
+      GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
     steps:
     - name: Custom AWS Login
       id: aws_login
@@ -269,6 +271,15 @@ jobs:
         echo "config-file=$CONFIGFILE" | tee -a $GITHUB_OUTPUT
       working-directory: ${{ inputs.working-directory }}
 
+    - name: Generate temporary GitHub token
+      id: github_token
+      if: ${{ env.GH_APP_CLIENT_ID != '' && env.GH_APP_PRIVATE_KEY != '' }}
+      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 #v3.2.0
+      with:
+        client-id: ${{ env.GH_APP_CLIENT_ID }}
+        private-key: ${{ env.GH_APP_PRIVATE_KEY }}
+        owner: ${{ github.repository_owner }}
+
     - name: Run Terraform ${{ steps.options.outputs.action }}
       id: tf_run
       shell: bash
@@ -278,7 +289,7 @@ jobs:
         CONFIG_FILE: ${{ steps.options.outputs.config-file }}
         TAGS_VAR: ${{ steps.tags_var.outputs.value }}
         TF_VAR_digitalocean_token: ${{ secrets.TF_VAR_DIGITALOCEAN_TOKEN }}
-        TF_VAR_github_token: ${{ secrets.TF_VAR_GITHUB_TOKEN }}
+        TF_VAR_github_token: ${{ steps.github_token.outputs.token || '' }}
       run: terraform $ACTION -json -no-color ${CONFIG_FILE:+$CONFIG_FILE} -var="$TAGS_VAR" 2>&1 | tee tf-logs.json
       working-directory: ${{ inputs.working-directory }}
 
