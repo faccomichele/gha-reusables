@@ -27,6 +27,10 @@ on:
         description: 'The Terraform action to perform: "plan" (review changes only), "apply" (apply changes), or "destroy" (destroy resources)'
         type: string
         default: 'plan'
+      action-arguments:
+        description: 'Optional additional arguments to pass to the Terraform action (e.g., "-target=module.example")'
+        type: string
+        default: ''
       working-directory:
         description: 'The location containing the terraform related files'
         type: string
@@ -256,8 +260,11 @@ jobs:
           destroy)
             echo "action=destroy -auto-approve" | tee -a $GITHUB_OUTPUT
             ;;
+          state)
+            echo "action=state rm '${{ inputs.action-arguments }}'" | tee -a $GITHUB_OUTPUT
+            ;;
           *)
-            echo "Error: Invalid action '${{ inputs.action }}'. Must be 'plan', 'apply', or 'destroy'."
+            echo "Error: Invalid action '${{ inputs.action }}'. Must be 'plan', 'apply', 'destroy', or 'state'."
             exit 1
             ;;
         esac
