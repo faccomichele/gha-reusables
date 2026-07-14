@@ -289,6 +289,7 @@ jobs:
 
     - name: Run Terraform ${{ steps.options.outputs.action }}
       id: tf_run
+      if: ${{ inputs.action != 'state' }}
       shell: bash
       env:
         AWS_REGION: ${{ inputs.global && '' || inputs.region }}
@@ -298,6 +299,25 @@ jobs:
         TF_VAR_digitalocean_token: ${{ secrets.TF_VAR_DIGITALOCEAN_TOKEN }}
         TF_VAR_github_token: ${{ steps.github_token.outputs.token || '' }}
       run: terraform $ACTION ${{ inputs.action-arguments }} -json -no-color ${CONFIG_FILE:+$CONFIG_FILE} -var="$TAGS_VAR" 2>&1 | tee tf-logs.json
+      working-directory: ${{ inputs.working-directory }}
+
+    - name: Run Terraform ${{ steps.options.outputs.action }}
+      if: ${{ inputs.action == 'state' }}
+      shell: bash
+      env:
+        AWS_REGION: ${{ inputs.global && '' || inputs.region }}
+        ACTION: ${{ steps.options.outputs.action }}
+      run: |
+        set +e
+        TF_RUN_OUTPUT=$(terraform $ACTION ${{ inputs.action-arguments }} 2>&1)
+        TF_RUN_EXIT_CODE=$?
+        echo "$TF_RUN_OUTPUT"
+        {
+          echo "terraform_output<<EOF"
+          echo "$TF_RUN_OUTPUT"
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+        exit $TF_RUN_EXIT_CODE
       working-directory: ${{ inputs.working-directory }}
 
     - name: Create Show output from Plan action
