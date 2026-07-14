@@ -261,7 +261,7 @@ jobs:
             echo "action=destroy -auto-approve" | tee -a $GITHUB_OUTPUT
             ;;
           state)
-            echo "action=state rm '${{ inputs.action-arguments }}'" | tee -a $GITHUB_OUTPUT
+            echo "action=state rm" | tee -a $GITHUB_OUTPUT
             ;;
           *)
             echo "Error: Invalid action '${{ inputs.action }}'. Must be 'plan', 'apply', 'destroy', or 'state'."
@@ -297,7 +297,7 @@ jobs:
         TAGS_VAR: ${{ steps.tags_var.outputs.value }}
         TF_VAR_digitalocean_token: ${{ secrets.TF_VAR_DIGITALOCEAN_TOKEN }}
         TF_VAR_github_token: ${{ steps.github_token.outputs.token || '' }}
-      run: terraform $ACTION -json -no-color ${CONFIG_FILE:+$CONFIG_FILE} -var="$TAGS_VAR" 2>&1 | tee tf-logs.json
+      run: terraform $ACTION ${{ inputs.action-arguments }} -json -no-color ${CONFIG_FILE:+$CONFIG_FILE} -var="$TAGS_VAR" 2>&1 | tee tf-logs.json
       working-directory: ${{ inputs.working-directory }}
 
     - name: Create Show output from Plan action
@@ -308,25 +308,25 @@ jobs:
 
     - name: Run Terraform Output to MD Report
       id: tf_report
-      if: always()
+      if: ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') }}
       shell: bash
       run: ./tf_out_to_md.py
       working-directory: ${{ inputs.working-directory }}
 
     - name: Create JSON Output
-      if: ${{ inputs.action != 'destroy' }}
+      if: ${{ inputs.action == 'plan' || inputs.action == 'apply' }}
       shell: bash
       run: terraform output -json > tf-output.json
       working-directory: ${{ inputs.working-directory }}
 
     - name: Convert working-directory Name
       id: wd_name
-      if: always()
+      if: ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') }}
       shell: bash
       run: echo "name=$(echo '${{ inputs.working-directory }}' | tr '/.' '_' )" | tee -a $GITHUB_OUTPUT
 
     - name: Upload Terraform JSON outputs artifact
-      if: inputs.upload-output-artifact
+      if: ${{ inputs.upload-output-artifact && (inputs.action == 'plan' || inputs.action == 'apply') }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 
       with:
         name: terraform-output-${{ inputs.environment }}-${{ inputs.region }}-${{ steps.wd_name.outputs.name }}-${{ github.run_id }}
@@ -334,13 +334,13 @@ jobs:
         retention-days: 1
     
     - name: Add report to job summary
-      if: always() && steps.tf_report.outcome == 'success'
+      if: ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && steps.tf_report.outcome == 'success' }}
       shell: bash
       run: cat tf-report.md >> $GITHUB_STEP_SUMMARY
       working-directory: ${{ inputs.working-directory }}
     
     - name: Prepare Terraform output for comment
-      if: always() && steps.tf_report.outcome == 'success' && github.event_name == 'pull_request'
+      if: ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && steps.tf_report.outcome == 'success' && github.event_name == 'pull_request' }}
       id: tf_comment_prep
       shell: bash
       run: |
@@ -378,7 +378,7 @@ jobs:
       working-directory: ${{ inputs.working-directory }}
       
     - name: Comment Terraform Output on PR
-      if: always() && steps.tf_comment_prep.outcome == 'success' && github.event_name == 'pull_request'
+      if:  ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && steps.tf_comment_prep.outcome == 'success' && github.event_name == 'pull_request' }}
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         COMMENT_BODY: ${{ steps.tf_comment_prep.outputs.comment_body }}
