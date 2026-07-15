@@ -48,6 +48,7 @@ jobs:
   core_params:
     name: Retrieve core AWS parameters
     runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
+    environment: ${{ inputs.environment-prefix != '' && format('{0}-{1}', inputs.environment-prefix, inputs.environment) || inputs.environment }}
     outputs:
       core-account: ${{ steps.get_core_params.outputs.core_account }}
     steps:
