@@ -45,33 +45,6 @@ jobs:
       id: repo_details
       uses: faccomichele/gha-composite-repo-details@v1
 
-  core_params:
-    name: Retrieve core AWS parameters
-    runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
-    environment: ${{ inputs.environment-prefix != '' && format('{0}-{1}', inputs.environment-prefix, inputs.environment) || inputs.environment }}
-    needs: repo_details
-    env:
-      REPO_NAME: ${{ needs.repo_details.outputs.repo-name }}
-    outputs:
-      core-account: ${{ steps.get_core_params.outputs.core_account }}
-    steps:
-    - name: Custom AWS Login
-      id: aws_login
-      uses: faccomichele/gha-composite-custom-aws-login@v1
-      with:
-        account_id: ${{ secrets.ACCOUNT_ID }}
-        role_secret: ${{ secrets.ROLE_SECRET }}
-
-    - name: Retrieve central account and role secret from SSM
-      id: get_core_params
-      shell: bash
-      run: |
-        echo "Retrieving SSM parameters from region ${AWS_REGION}..."
-        CORE_ACCOUNT=$(aws ssm get-parameter --name "/terraform-core/global/central-account/account-id" --with-decryption --query Parameter.Value --output text)
-        # Mask values in GitHub Actions logs
-        echo "::add-mask::$CORE_ACCOUNT"
-        echo "core_account=$CORE_ACCOUNT" | tee -a $GITHUB_OUTPUT
-
   detect_lambdas:
     name: Detect Lambda Functions - (${{ inputs.working-directory }})
     runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
@@ -245,7 +218,7 @@ jobs:
       fail-fast: false
       matrix:
         lambda: ${{ fromJson(needs.detect_lambdas.outputs.matrix) }}
-    needs: [detect_lambdas, repo_details, core_params]
+    needs: [detect_lambdas, repo_details]
     env:
       REPO_NAME: ${{ needs.repo_details.outputs.repo-name }}
     steps:
@@ -432,6 +405,8 @@ jobs:
         WORKINGDIR: ${{ inputs.working-directory }}
       run: |
         STRIPPED_WORKDIR="${WORKINGDIR#./}"
-        aws s3 cp "$WORKINGDIR/" "s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${{ needs.core_params.outputs.core-account }}/${REPO_NAME}/${{ inputs.environment-prefix != '' && format('{0}/', inputs.environment-prefix) || '' }}${ENV_NAME}/${STRIPPED_WORKDIR}/" \
+        CORE_ACCOUNT=$(aws ssm get-parameter --name "/terraform-core/global/central-account/account-id" --with-decryption --query Parameter.Value --output text)
+        echo "::add-mask::$CORE_ACCOUNT"
+        aws s3 cp "$WORKINGDIR/" "s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${CORE_ACCOUNT}/${REPO_NAME}/${{ inputs.environment-prefix != '' && format('{0}/', inputs.environment-prefix) || '' }}${ENV_NAME}/${STRIPPED_WORKDIR}/" \
           --recursive --exclude "*" --include "*.zip" --no-progress
-        echo "Lambda packages uploaded to s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${{ needs.core_params.outputs.core-account }}/${REPO_NAME}/${{ inputs.environment-prefix != '' && format('{0}/', inputs.environment-prefix) || '' }}${ENV_NAME}/${STRIPPED_WORKDIR}/"
+        echo "Lambda packages uploaded to s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${CORE_ACCOUNT}/${REPO_NAME}/${{ inputs.environment-prefix != '' && format('{0}/', inputs.environment-prefix) || '' }}${ENV_NAME}/${STRIPPED_WORKDIR}/"
