@@ -96,6 +96,21 @@ jobs:
       run: wget -O tf_out_to_md.py https://raw.githubusercontent.com/faccomichele/utils-n-scripts/refs/heads/main/terraform/tf_out_to_md.py && chmod +x tf_out_to_md.py
       working-directory: ${{ inputs.working-directory }}
 
+    - name: Retrieve central account and role secret from SSM
+      id: get_core_params
+      shell: bash
+      run: |
+        echo "Retrieving SSM parameters from region ${AWS_REGION}..."
+        CORE_ACCOUNT=$(aws ssm get-parameter --name "/terraform-core/global/central-account/account-id" --with-decryption --query Parameter.Value --output text)
+        CORE_ROLE_SECRET=$(aws ssm get-parameter --name "/terraform-core/${ENV_NAME}/terraform/state-file/role-secret" --with-decryption --query Parameter.Value --output text)
+        CORE_BUCKET_REGION=$(aws ssm get-parameter --name "/terraform-core/${ENV_NAME}/terraform/state-file/bucket-region" --with-decryption --query Parameter.Value --output text)
+        # Mask values in GitHub Actions logs
+        echo "::add-mask::$CORE_ACCOUNT"
+        echo "::add-mask::$CORE_ROLE_SECRET"
+        echo "core_account=$CORE_ACCOUNT" | tee -a $GITHUB_OUTPUT
+        echo "core_role_secret=$CORE_ROLE_SECRET" | tee -a $GITHUB_OUTPUT
+        echo "core_bucket_region=$CORE_BUCKET_REGION" | tee -a $GITHUB_OUTPUT
+        
     - name: Download lambda artifacts from S3 if existing
       shell: bash
       continue-on-error: true
@@ -122,20 +137,6 @@ jobs:
           "${WORKINGDIR}/" --no-progress
         echo "Lambda packages downloaded from s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${{ steps.get_core_params.outputs.core_account }}/${REPO_NAME}/${{ inputs.environment-prefix != '' && format('{0}/', inputs.environment-prefix) || '' }}${ENV_NAME}/${STRIPPED_WORKDIR}/"
 
-    - name: Retrieve central account and role secret from SSM
-      id: get_core_params
-      shell: bash
-      run: |
-        echo "Retrieving SSM parameters from region ${AWS_REGION}..."
-        CORE_ACCOUNT=$(aws ssm get-parameter --name "/terraform-core/global/central-account/account-id" --with-decryption --query Parameter.Value --output text)
-        CORE_ROLE_SECRET=$(aws ssm get-parameter --name "/terraform-core/${ENV_NAME}/terraform/state-file/role-secret" --with-decryption --query Parameter.Value --output text)
-        CORE_BUCKET_REGION=$(aws ssm get-parameter --name "/terraform-core/${ENV_NAME}/terraform/state-file/bucket-region" --with-decryption --query Parameter.Value --output text)
-        # Mask values in GitHub Actions logs
-        echo "::add-mask::$CORE_ACCOUNT"
-        echo "::add-mask::$CORE_ROLE_SECRET"
-        echo "core_account=$CORE_ACCOUNT" | tee -a $GITHUB_OUTPUT
-        echo "core_role_secret=$CORE_ROLE_SECRET" | tee -a $GITHUB_OUTPUT
-        echo "core_bucket_region=$CORE_BUCKET_REGION" | tee -a $GITHUB_OUTPUT
     - name: Get S3 Backend configuration for storing shared state files
       shell: bash
       env:
