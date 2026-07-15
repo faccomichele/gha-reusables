@@ -7,10 +7,6 @@ on:
         description: 'The target environment (dev, stg, prod), required when s3-bucket is provided'
         type: string
         required: true
-      environment-prefix:
-        description: 'Optional prefix for the environment name (e.g., "myorg-"). When set, it is prepended to the environment name and used in the Terraform workspace and Project tag.'
-        type: string
-        default: ''
       region:
         description: 'AWS region for the S3 bucket'
         type: string
@@ -212,7 +208,7 @@ jobs:
   build_lambdas:
     name: Build ${{ matrix.lambda.path }}${{ matrix.lambda.path != '' && '/' || '' }}${{ matrix.lambda.folder }} (${{ matrix.lambda.type }})
     runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
-    environment: ${{ inputs.environment-prefix != '' && format('{0}-{1}', inputs.environment-prefix, inputs.environment) || inputs.environment }}
+    environment: ${{ inputs.environment }}
     if: needs.detect_lambdas.outputs.has_lambdas == 'true'
     strategy:
       fail-fast: false
@@ -407,6 +403,6 @@ jobs:
         STRIPPED_WORKDIR="${WORKINGDIR#./}"
         CORE_ACCOUNT=$(aws ssm get-parameter --name "/terraform-core/global/central-account/account-id" --with-decryption --query Parameter.Value --output text)
         echo "::add-mask::$CORE_ACCOUNT"
-        aws s3 cp "$WORKINGDIR/" "s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${CORE_ACCOUNT}/${REPO_NAME}/${{ inputs.environment-prefix != '' && format('{0}/', inputs.environment-prefix) || '' }}${ENV_NAME}/${STRIPPED_WORKDIR}/" \
+        aws s3 cp "$WORKINGDIR/" "s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${CORE_ACCOUNT}/${REPO_NAME}/${ENV_NAME}/${STRIPPED_WORKDIR}/" \
           --recursive --exclude "*" --include "*.zip" --no-progress
-        echo "Lambda packages uploaded to s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${CORE_ACCOUNT}/${REPO_NAME}/${{ inputs.environment-prefix != '' && format('{0}/', inputs.environment-prefix) || '' }}${ENV_NAME}/${STRIPPED_WORKDIR}/"
+        echo "Lambda packages uploaded to s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${CORE_ACCOUNT}/${REPO_NAME}/${ENV_NAME}/${STRIPPED_WORKDIR}/"

@@ -133,9 +133,9 @@ jobs:
         STRIPPED_WORKDIR="${STRIPPED_WORKDIR#/}"
 
         mkdir -p "${WORKINGDIR}"
-        aws s3 sync "s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${{ steps.get_core_params.outputs.core_account }}/${REPO_NAME}/${{ inputs.environment-prefix != '' && format('{0}/', inputs.environment-prefix) || '' }}${ENV_NAME}/${STRIPPED_WORKDIR}/" \
+        aws s3 sync "s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${{ steps.get_core_params.outputs.core_account }}/${REPO_NAME}/${ENV_NAME}/${STRIPPED_WORKDIR}/" \
           "${WORKINGDIR}/" --no-progress
-        echo "Lambda packages downloaded from s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${{ steps.get_core_params.outputs.core_account }}/${REPO_NAME}/${{ inputs.environment-prefix != '' && format('{0}/', inputs.environment-prefix) || '' }}${ENV_NAME}/${STRIPPED_WORKDIR}/"
+        echo "Lambda packages downloaded from s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${{ steps.get_core_params.outputs.core_account }}/${REPO_NAME}/${ENV_NAME}/${STRIPPED_WORKDIR}/"
 
     - name: Get S3 Backend configuration for storing shared state files
       shell: bash
