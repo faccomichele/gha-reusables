@@ -69,7 +69,7 @@ jobs:
       uses: faccomichele/gha-composite-repo-details@v1
 
   terraform_plan_apply:
-    name: ${{ format('Run Terraform "{0}" ({1}{2}) - ({3})', inputs.action ,inputs.environment-prefix != '' && format('{0}{1}', inputs.environment-prefix, inputs.environment) || inputs.environment, inputs.global && '' || format('-{0}', inputs.region), inputs.working-directory) }}
+    name: ${{ format('Run Terraform "{0}" ({1}{2}) - ({3})', inputs.action, inputs.environment-prefix != '' && format('{0}-{1}', inputs.environment-prefix, inputs.environment) || inputs.environment, inputs.global && '' || format('-{0}', inputs.region), inputs.working-directory) }}
     runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
     environment: ${{ inputs.environment-prefix != '' && format('{0}-{1}', inputs.environment-prefix, inputs.environment) || inputs.environment }}
     if: ${{ inputs.working-directory != '[]' }}
@@ -303,7 +303,6 @@ jobs:
       run: |
         # 1. Write the entire vars context safely to a JSON file
         python3 -c "import os, json; print(json.dumps(dict(os.environ)))" > gh_vars.json
-        cat gh_vars.json
         # 2. Run Terraform (it will now inherit these environment variables)
         terraform $ACTION ${{ inputs.action-arguments }} -json -no-color ${CONFIG_FILE:+$CONFIG_FILE} -var="$TAGS_VAR" 2>&1 | tee tf-logs.json
       working-directory: ${{ inputs.working-directory }}
