@@ -299,7 +299,12 @@ jobs:
         TAGS_VAR: ${{ steps.tags_var.outputs.value }}
         TF_VAR_digitalocean_token: ${{ secrets.TF_VAR_DIGITALOCEAN_TOKEN }}
         TF_VAR_github_token: ${{ steps.github_token.outputs.token || '' }}
-      run: terraform $ACTION ${{ inputs.action-arguments }} -json -no-color ${CONFIG_FILE:+$CONFIG_FILE} -var="$TAGS_VAR" 2>&1 | tee tf-logs.json
+      run: |
+        # 1. Dynamically dump all GH vars into the current step's environment
+        echo '${{ toJSON(vars) }}' | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
+        export $(cat .env | xargs)
+        # 2. Run Terraform (it will now inherit these environment variables)
+        terraform $ACTION ${{ inputs.action-arguments }} -json -no-color ${CONFIG_FILE:+$CONFIG_FILE} -var="$TAGS_VAR" 2>&1 | tee tf-logs.json
       working-directory: ${{ inputs.working-directory }}
 
     - name: Run Terraform ${{ steps.options.outputs.action }}
