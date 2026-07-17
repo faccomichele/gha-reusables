@@ -302,6 +302,7 @@ jobs:
       run: |
         # 1. Write the entire vars context safely to a JSON file
         echo '${{ toJSON(vars) }}' > gh_vars.json
+        cat gh_vars.json
         # 2. Run Terraform (it will now inherit these environment variables)
         terraform $ACTION ${{ inputs.action-arguments }} -json -no-color ${CONFIG_FILE:+$CONFIG_FILE} -var="$TAGS_VAR" 2>&1 | tee tf-logs.json
       working-directory: ${{ inputs.working-directory }}
