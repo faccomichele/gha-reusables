@@ -15,13 +15,6 @@ on:
         description: 'The location containing the files to be synced to S3'
         type: string
         default: '.'
-    secrets:
-      ACCOUNT_ID:
-        description: 'AWS account ID for the target environment'
-        required: true
-      ROLE_SECRET:
-        description: 'AWS role secret for the target environment'
-        required: true
 
 permissions:
   id-token: write
