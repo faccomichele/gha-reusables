@@ -54,6 +54,12 @@ jobs:
         path: /tmp/terraform-output
         merge-multiple: true
 
+    - name: Custom AWS Login
+      uses: faccomichele/gha-composite-custom-aws-login@v1
+      with:
+        account_id: ${{ secrets.ACCOUNT_ID }}
+        role_secret: ${{ secrets.ROLE_SECRET }}
+
     - name: Parse Terraform outputs and perform replacements
       id: process_outputs
       shell: bash
@@ -68,9 +74,6 @@ jobs:
         
         echo "Processing Terraform outputs..."
         
-        # Extract all output keys and values
-        OUTPUT_KEYS=$(jq -r 'keys[]' "$TF_OUTPUT_FILE")
-        
         # Create a temporary script for all replacements
         REPLACE_SCRIPT="/tmp/replace_outputs.sh"
         cat > "$REPLACE_SCRIPT" << 'EOFSCRIPT'
@@ -79,12 +82,36 @@ jobs:
         
         TF_OUTPUT_FILE="$1"
         WORKING_DIR="$2"
+
+        resolve_parameter_value() {
+          local parameter_name=$1
+
+          aws ssm get-parameter \
+            --name "$parameter_name" \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text
+        }
+
+        escape_sed_replacement() {
+          printf '%s' "$1" | sed -e 's/[&|\\]/\\&/g'
+        }
         
         # Function to perform sed replacement
         perform_replacement() {
           local key=$1
-          local value=$2
+          local parameter_name=$2
+          local value
           local pattern="__${key}__"
+
+          value=$(resolve_parameter_value "$parameter_name")
+
+          if [ "$value" = "None" ] || [ -z "$value" ]; then
+            echo "Error: SSM parameter for ${pattern} returned an empty value"
+            exit 1
+          fi
+
+          echo "::add-mask::$value"
           
           # Skip if value is a multi-line string (would break sed command)
           if [[ "$value" == *$'\n'* ]]; then
@@ -92,25 +119,27 @@ jobs:
             return
           fi
           
-          echo "Replacing $pattern with $value"
+          local escaped_value
+          escaped_value=$(escape_sed_replacement "$value")
+
+          echo "Replacing $pattern from a secure parameter"
           
           # Find all files in working directory (excluding .git and hidden files)
           find "$WORKING_DIR" -type f ! -path "*/.git/*" ! -path "*/.*" -print0 | while IFS= read -r -d '' file; do
             # Skip binary files
             if file "$file" | grep -q "text"; then
               # Perform in-place replacement
-              sed -i "s|${pattern}|${value}|g" "$file"
+              sed -i "s|${pattern}|${escaped_value}|g" "$file"
             fi
           done
         }
         
         # Process each output
         while IFS= read -r key; do
-          value=$(jq -r --arg key "$key" '.[$key].value' "$TF_OUTPUT_FILE")
+          parameter_name=$(jq -r --arg key "$key" '.[$key].value' "$TF_OUTPUT_FILE")
           
-          # Handle different value types
-          if [ "$value" != "null" ] && [ -n "$value" ]; then
-            perform_replacement "$key" "$value"
+          if [ "$parameter_name" != "null" ] && [ -n "$parameter_name" ]; then
+            perform_replacement "$key" "$parameter_name"
           fi
         done < <(jq -r 'keys[]' "$TF_OUTPUT_FILE")
         
@@ -123,21 +152,27 @@ jobs:
         "$REPLACE_SCRIPT" "$TF_OUTPUT_FILE" "${{ inputs.working-directory }}"
         
         # Extract specific outputs needed for AWS operations
-        WEBSITE_BUCKET=$(jq -r '.website_bucket_name.value // empty' "$TF_OUTPUT_FILE")
-        CLOUDFRONT_ID=$(jq -r '.cloudfront_distribution_id.value // empty' "$TF_OUTPUT_FILE")
+        WEBSITE_BUCKET_PARAM=$(jq -r '.website_bucket_name.value // empty' "$TF_OUTPUT_FILE")
+        CLOUDFRONT_ID_PARAM=$(jq -r '.cloudfront_distribution_id.value // empty' "$TF_OUTPUT_FILE")
+
+        if [ -n "$WEBSITE_BUCKET_PARAM" ]; then
+          WEBSITE_BUCKET=$(aws ssm get-parameter --name "$WEBSITE_BUCKET_PARAM" --with-decryption --query 'Parameter.Value' --output text)
+          echo "::add-mask::$WEBSITE_BUCKET"
+        else
+          WEBSITE_BUCKET=""
+        fi
+
+        if [ -n "$CLOUDFRONT_ID_PARAM" ]; then
+          CLOUDFRONT_ID=$(aws ssm get-parameter --name "$CLOUDFRONT_ID_PARAM" --with-decryption --query 'Parameter.Value' --output text)
+          echo "::add-mask::$CLOUDFRONT_ID"
+        else
+          CLOUDFRONT_ID=""
+        fi
         
         echo "website_bucket=$WEBSITE_BUCKET" >> $GITHUB_OUTPUT
         echo "cloudfront_id=$CLOUDFRONT_ID" >> $GITHUB_OUTPUT
         
-        echo "Extracted outputs:"
-        echo "  Website bucket: $WEBSITE_BUCKET"
-        echo "  CloudFront distribution ID: $CLOUDFRONT_ID"
-
-    - name: Custom AWS Login
-      uses: faccomichele/gha-composite-custom-aws-login@v1
-      with:
-        account_id: ${{ secrets.ACCOUNT_ID }}
-        role_secret: ${{ secrets.ROLE_SECRET }}
+        echo "Resolved sensitive Terraform output parameters for deployment"
         
     - name: Sync files to S3 and capture changed paths
       id: s3_sync
