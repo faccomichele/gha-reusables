@@ -100,6 +100,7 @@ jobs:
 
       # TO DO: Hardcode the script version once stable - Import it to ORG level once ready
     - name: Get the Terraform Report Script
+      if: ${{ !inputs.skip-terraform-report }}
       shell: bash
       run: wget -O tf_out_to_md.py https://raw.githubusercontent.com/faccomichele/utils-n-scripts/refs/heads/main/terraform/tf_out_to_md.py && chmod +x tf_out_to_md.py
       working-directory: ${{ inputs.working-directory }}
