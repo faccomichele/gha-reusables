@@ -44,6 +44,11 @@ on:
         type: boolean
         required: false
         default: false
+      skip-terraform-report:
+        description: 'Optional: If true, skip generating the Terraform report and adding it to the job summary and PR comment.'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   id-token: write
@@ -66,7 +71,7 @@ jobs:
     steps:
     - name: Set branch names
       id: repo_details
-      uses: faccomichele/gha-composite-repo-details@v1
+      uses: faccomichele/gha-composite-repo-details@v1.0.1
 
   terraform_plan_apply:
     name: ${{ format('Run Terraform "{0}" ({1}{2}) - ({3})', inputs.action, inputs.environment-prefix != '' && format('{0}-{1}', inputs.environment-prefix, inputs.environment) || inputs.environment, inputs.global && '' || format('-{0}', inputs.region), inputs.working-directory) }}
@@ -82,10 +87,13 @@ jobs:
     steps:
     - name: Custom AWS Login
       id: aws_login
-      uses: faccomichele/gha-composite-custom-aws-login@v1
+      uses: faccomichele/gha-composite-custom-aws-login@v1.0.1
       with:
         account_id: ${{ secrets.ACCOUNT_ID }}
         role_secret: ${{ secrets.ROLE_SECRET }}
+        aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        sts_endpoint: ${{ vars.STS_ENDPOINT }}
 
     - name: Get source code locally from this repo
       uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1

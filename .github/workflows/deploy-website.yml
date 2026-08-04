@@ -34,7 +34,7 @@ jobs:
     steps:
     - name: Set branch names
       id: repo_details
-      uses: faccomichele/gha-composite-repo-details@v1
+      uses: faccomichele/gha-composite-repo-details@v1.0.1
 
   deploy_website:
     name: Deploy Website (${{ inputs.environment }}_${{ inputs.region }})
@@ -55,10 +55,13 @@ jobs:
         merge-multiple: true
 
     - name: Custom AWS Login
-      uses: faccomichele/gha-composite-custom-aws-login@v1
+      uses: faccomichele/gha-composite-custom-aws-login@v1.0.1
       with:
         account_id: ${{ secrets.ACCOUNT_ID }}
         role_secret: ${{ secrets.ROLE_SECRET }}
+        aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        sts_endpoint: ${{ vars.STS_ENDPOINT }}
 
     - name: Parse Terraform outputs and perform replacements
       id: process_outputs
