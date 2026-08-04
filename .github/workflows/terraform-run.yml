@@ -342,7 +342,7 @@ jobs:
 
     - name: Run Terraform Output to MD Report
       id: tf_report
-      if: ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') }}
+      if: ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && !inputs.skip-terraform-report }}
       shell: bash
       run: ./tf_out_to_md.py
       working-directory: ${{ inputs.working-directory }}
@@ -368,13 +368,13 @@ jobs:
         retention-days: 1
     
     - name: Add report to job summary
-      if: ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && steps.tf_report.outcome == 'success' }}
+      if: ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && !inputs.skip-terraform-report && steps.tf_report.outcome == 'success' }}
       shell: bash
       run: cat tf-report.md >> $GITHUB_STEP_SUMMARY
       working-directory: ${{ inputs.working-directory }}
     
     - name: Prepare Terraform output for comment
-      if: ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && steps.tf_report.outcome == 'success' && github.event_name == 'pull_request' }}
+      if: ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && !inputs.skip-terraform-report && steps.tf_report.outcome == 'success' && github.event_name == 'pull_request' }}
       id: tf_comment_prep
       shell: bash
       run: |
@@ -412,7 +412,7 @@ jobs:
       working-directory: ${{ inputs.working-directory }}
       
     - name: Comment Terraform Output on PR
-      if:  ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && steps.tf_comment_prep.outcome == 'success' && github.event_name == 'pull_request' }}
+      if:  ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && !inputs.skip-terraform-report && steps.tf_comment_prep.outcome == 'success' && github.event_name == 'pull_request' }}
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         COMMENT_BODY: ${{ steps.tf_comment_prep.outputs.comment_body }}
