@@ -86,6 +86,10 @@ jobs:
       GH_APP_CLIENT_ID: ${{ secrets.GH_APP_CLIENT_ID }}
       GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
     steps:
+    - name: Debug
+      shell: bash
+      run: echo "::debug::$AWS_ENDPOINT_URL"
+
     - name: Custom AWS Login
       id: aws_login
       uses: faccomichele/gha-composite-custom-aws-login@v1.0.1
