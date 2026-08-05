@@ -58,6 +58,7 @@ permissions:
 env:
   ENV_NAME: ${{ inputs.environment }}
   AWS_REGION: ${{ inputs.region }}
+  AWS_ENDPOINT_URL: ${{ vars.STS_ENDPOINT }}
   TERRAFORM_REGION: ${{ inputs.global && 'global' || inputs.region }}
   VALIDATION_ENVIRONMENT: ${{ inputs.validation_environment }}
 
@@ -93,7 +94,6 @@ jobs:
         role_secret: ${{ secrets.ROLE_SECRET }}
         aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        sts_endpoint: ${{ vars.STS_ENDPOINT }}
 
     - name: Get source code locally from this repo
       uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1

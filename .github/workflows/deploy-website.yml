@@ -23,6 +23,7 @@ permissions:
 env:
   ENV_NAME: ${{ inputs.environment }}
   AWS_REGION: ${{ inputs.region }}
+  AWS_ENDPOINT_URL: ${{ vars.STS_ENDPOINT }}
 
 jobs:
   repo_details:
@@ -61,7 +62,6 @@ jobs:
         role_secret: ${{ secrets.ROLE_SECRET }}
         aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        sts_endpoint: ${{ vars.STS_ENDPOINT }}
 
     - name: Parse Terraform outputs and perform replacements
       id: process_outputs
