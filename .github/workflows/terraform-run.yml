@@ -92,7 +92,7 @@ jobs:
 
     - name: Custom AWS Login
       id: aws_login
-      uses: faccomichele/gha-composite-custom-aws-login@v1.0.1
+      uses: faccomichele/gha-composite-custom-aws-login@v1.0.2
       with:
         account_id: ${{ secrets.ACCOUNT_ID }}
         role_secret: ${{ secrets.ROLE_SECRET }}
