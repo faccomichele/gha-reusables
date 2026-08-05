@@ -86,10 +86,6 @@ jobs:
       GH_APP_CLIENT_ID: ${{ secrets.GH_APP_CLIENT_ID }}
       GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
     steps:
-    - name: Debug
-      shell: bash
-      run: echo "::debug::$AWS_ENDPOINT_URL"
-
     - name: Custom AWS Login
       id: aws_login
       uses: faccomichele/gha-composite-custom-aws-login@v1.0.2
@@ -154,18 +150,20 @@ jobs:
       shell: bash
       env:
           ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
+          USE_PATH_STYLE: ${{ vars.USE_PATH_STYLE || 'false' }}
       run: |
         cat > s3backend.tf << EOF
         terraform {
           backend "s3" {
-            bucket        = "aws-terraform-core-state-files-${ENV_NAME}-${{ steps.get_core_params.outputs.core_account }}"
-            key           = "${ACCOUNT_ID}/${REPO_NAME}/terraform.tfstate"
-            region        = "${{ steps.get_core_params.outputs.core_bucket_region }}"
-            assume_role   = {
-              role_arn    = "arn:aws:iam::${{ steps.get_core_params.outputs.core_account }}:role/terraform-core-backend-setup-${ENV_NAME}-TfStateRole-${{ steps.get_core_params.outputs.core_role_secret }}"
+            bucket         = "aws-terraform-core-state-files-${ENV_NAME}-${{ steps.get_core_params.outputs.core_account }}"
+            key            = "${ACCOUNT_ID}/${REPO_NAME}/terraform.tfstate"
+            region         = "${{ steps.get_core_params.outputs.core_bucket_region }}"
+            assume_role    = {
+              role_arn = "arn:aws:iam::${{ steps.get_core_params.outputs.core_account }}:role/terraform-core-backend-setup-${ENV_NAME}-TfStateRole-${{ steps.get_core_params.outputs.core_role_secret }}"
             }
-            encrypt       = true
-            use_lockfile  = true
+            encrypt        = true
+            use_lockfile   = true
+            use_path_style = ${USE_PATH_STYLE}
           }
         }
         EOF
