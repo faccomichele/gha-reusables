@@ -44,6 +44,11 @@ on:
         type: boolean
         required: false
         default: false
+      skip-terraform-report:
+        description: 'Optional: If true, skip generating the Terraform report and adding it to the job summary and PR comment.'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   id-token: write
@@ -53,6 +58,7 @@ permissions:
 env:
   ENV_NAME: ${{ inputs.environment }}
   AWS_REGION: ${{ inputs.region }}
+  AWS_ENDPOINT_URL: ${{ vars.STS_ENDPOINT }}
   TERRAFORM_REGION: ${{ inputs.global && 'global' || inputs.region }}
   VALIDATION_ENVIRONMENT: ${{ inputs.validation_environment }}
 
@@ -66,7 +72,7 @@ jobs:
     steps:
     - name: Set branch names
       id: repo_details
-      uses: faccomichele/gha-composite-repo-details@v1
+      uses: faccomichele/gha-composite-repo-details@v1.0.1
 
   terraform_plan_apply:
     name: ${{ format('Run Terraform "{0}" ({1}{2}) - ({3})', inputs.action, inputs.environment-prefix != '' && format('{0}-{1}', inputs.environment-prefix, inputs.environment) || inputs.environment, inputs.global && '' || format('-{0}', inputs.region), inputs.working-directory) }}
@@ -82,16 +88,19 @@ jobs:
     steps:
     - name: Custom AWS Login
       id: aws_login
-      uses: faccomichele/gha-composite-custom-aws-login@v1
+      uses: faccomichele/gha-composite-custom-aws-login@v1.0.2
       with:
         account_id: ${{ secrets.ACCOUNT_ID }}
         role_secret: ${{ secrets.ROLE_SECRET }}
+        aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
     - name: Get source code locally from this repo
       uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       # TO DO: Hardcode the script version once stable - Import it to ORG level once ready
     - name: Get the Terraform Report Script
+      if: ${{ !inputs.skip-terraform-report }}
       shell: bash
       run: wget -O tf_out_to_md.py https://raw.githubusercontent.com/faccomichele/utils-n-scripts/refs/heads/main/terraform/tf_out_to_md.py && chmod +x tf_out_to_md.py
       working-directory: ${{ inputs.working-directory }}
@@ -141,18 +150,20 @@ jobs:
       shell: bash
       env:
           ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
+          USE_PATH_STYLE: ${{ vars.USE_PATH_STYLE || 'false' }}
       run: |
         cat > s3backend.tf << EOF
         terraform {
           backend "s3" {
-            bucket        = "aws-terraform-core-state-files-${ENV_NAME}-${{ steps.get_core_params.outputs.core_account }}"
-            key           = "${ACCOUNT_ID}/${REPO_NAME}/terraform.tfstate"
-            region        = "${{ steps.get_core_params.outputs.core_bucket_region }}"
-            assume_role   = {
-              role_arn    = "arn:aws:iam::${{ steps.get_core_params.outputs.core_account }}:role/terraform-core-backend-setup-${ENV_NAME}-TfStateRole-${{ steps.get_core_params.outputs.core_role_secret }}"
+            bucket         = "aws-terraform-core-state-files-${ENV_NAME}-${{ steps.get_core_params.outputs.core_account }}"
+            key            = "${ACCOUNT_ID}/${REPO_NAME}/terraform.tfstate"
+            region         = "${{ steps.get_core_params.outputs.core_bucket_region }}"
+            assume_role    = {
+              role_arn = "arn:aws:iam::${{ steps.get_core_params.outputs.core_account }}:role/terraform-core-backend-setup-${ENV_NAME}-TfStateRole-${{ steps.get_core_params.outputs.core_role_secret }}"
             }
-            encrypt       = true
-            use_lockfile  = true
+            encrypt        = true
+            use_lockfile   = true
+            use_path_style = ${USE_PATH_STYLE}
           }
         }
         EOF
@@ -334,7 +345,7 @@ jobs:
 
     - name: Run Terraform Output to MD Report
       id: tf_report
-      if: ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') }}
+      if: ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && !inputs.skip-terraform-report }}
       shell: bash
       run: ./tf_out_to_md.py
       working-directory: ${{ inputs.working-directory }}
@@ -360,13 +371,13 @@ jobs:
         retention-days: 1
     
     - name: Add report to job summary
-      if: ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && steps.tf_report.outcome == 'success' }}
+      if: ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && !inputs.skip-terraform-report && steps.tf_report.outcome == 'success' }}
       shell: bash
       run: cat tf-report.md >> $GITHUB_STEP_SUMMARY
       working-directory: ${{ inputs.working-directory }}
     
     - name: Prepare Terraform output for comment
-      if: ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && steps.tf_report.outcome == 'success' && github.event_name == 'pull_request' }}
+      if: ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && !inputs.skip-terraform-report && steps.tf_report.outcome == 'success' && github.event_name == 'pull_request' }}
       id: tf_comment_prep
       shell: bash
       run: |
@@ -404,7 +415,7 @@ jobs:
       working-directory: ${{ inputs.working-directory }}
       
     - name: Comment Terraform Output on PR
-      if:  ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && steps.tf_comment_prep.outcome == 'success' && github.event_name == 'pull_request' }}
+      if:  ${{ always() && (inputs.action == 'plan' || inputs.action == 'apply') && !inputs.skip-terraform-report && steps.tf_comment_prep.outcome == 'success' && github.event_name == 'pull_request' }}
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         COMMENT_BODY: ${{ steps.tf_comment_prep.outputs.comment_body }}
