@@ -11,7 +11,7 @@ on:
         description: 'AWS region for the S3 bucket'
         type: string
         required: true
-      working_directory:
+      working-directory:
         description: 'The location containing the lambda subfolders to build'
         type: string
         default: '.'
@@ -43,7 +43,7 @@ jobs:
       uses: faccomichele/gha-composite-repo-details@v1.0.1
 
   detect_lambdas:
-    name: Detect Lambda Functions - (${{ inputs.working_directory }})
+    name: Detect Lambda Functions - (${{ inputs.working-directory }})
     runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
     outputs:
       matrix: ${{ steps.detect.outputs.matrix }}
@@ -64,14 +64,14 @@ jobs:
         FULL_REBUILD="${{ inputs.full-rebuild }}"
 
         # Check if working directory exists
-        if [ ! -d "${{ inputs.working_directory }}" ]; then
-          echo "Working directory ${{ inputs.working_directory }} does not exist"
+        if [ ! -d "${{ inputs.working-directory }}" ]; then
+          echo "Working directory ${{ inputs.working-directory }} does not exist"
           echo "matrix=$LAMBDAS" >> $GITHUB_OUTPUT
           echo "has_lambdas=$HAS_LAMBDAS" >> $GITHUB_OUTPUT
           exit 0
         fi
 
-        cd "${{ inputs.working_directory }}"
+        cd "${{ inputs.working-directory }}"
 
         # ---------------------------------------------------------------------------
         # Partial-build mode: detect which lambda directories were modified via git diff
@@ -101,8 +101,8 @@ jobs:
             echo "Changed files detected:"
             echo "$CHANGED_FILES"
 
-            # Normalize working_directory prefix for path stripping
-            WORKDIR="${{ inputs.working_directory }}"
+            # Normalize working-directory prefix for path stripping
+            WORKDIR="${{ inputs.working-directory }}"
             WORKDIR="${WORKDIR#./}"
             [ "$WORKDIR" = "." ] && WORKDIR=""
 
@@ -249,9 +249,9 @@ jobs:
       run: |
         # Navigate to the lambda directory (create zips here, then move them up one level)
         if [ -n "${{ matrix.lambda.path }}" ]; then
-          cd "${{ inputs.working_directory }}/${{ matrix.lambda.path }}/${{ matrix.lambda.folder }}"
+          cd "${{ inputs.working-directory }}/${{ matrix.lambda.path }}/${{ matrix.lambda.folder }}"
         else
-          cd "${{ inputs.working_directory }}/${{ matrix.lambda.folder }}"
+          cd "${{ inputs.working-directory }}/${{ matrix.lambda.folder }}"
         fi
 
         # Use the folder name as the package filename
@@ -309,9 +309,9 @@ jobs:
       run: |
         # Navigate to the lambda directory (create zips here, then move them up one level)
         if [ -n "${{ matrix.lambda.path }}" ]; then
-          cd "${{ inputs.working_directory }}/${{ matrix.lambda.path }}/${{ matrix.lambda.folder }}"
+          cd "${{ inputs.working-directory }}/${{ matrix.lambda.path }}/${{ matrix.lambda.folder }}"
         else
-          cd "${{ inputs.working_directory }}/${{ matrix.lambda.folder }}"
+          cd "${{ inputs.working-directory }}/${{ matrix.lambda.folder }}"
         fi
 
         # Use the folder name as the package filename
@@ -401,7 +401,7 @@ jobs:
     - name: Upload Lambda packages to S3
       shell: bash
       env:
-        WORKINGDIR: ${{ inputs.working_directory }}
+        WORKINGDIR: ${{ inputs.working-directory }}
       run: |
         STRIPPED_WORKDIR="${WORKINGDIR#./}"
         CORE_ACCOUNT=$(aws ssm get-parameter --name "/terraform-core/global/central-account/account-id" --with-decryption --query Parameter.Value --output text)

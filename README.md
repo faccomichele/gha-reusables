@@ -39,7 +39,7 @@ Runs Terraform against a shared state file stored in S3 and generates a Markdown
 | `environment-prefix` | string | `''` | No | Optional prefix for the environment name (e.g., `myorg-`). When set, it is prepended to the environment name and used in the Terraform workspace and Project tag. |
 | `region` | string | - | Yes | AWS region for the S3 bucket |
 | `global` | boolean | `false` | No | When true, Terraform treats the run as global (no region in workspace/varfile/terraform env), while AWS CLI still uses the provided region |
-| `validation_environment` | string | `''` | No | Optional validation environment suffix (e.g., `val1`). When set, it is appended to the Terraform workspace and Project tag |
+| `validation-environment` | string | `''` | No | Optional validation environment suffix (e.g., `val1`). When set, it is appended to the Terraform workspace and Project tag |
 | `action` | string | `plan` | No | The Terraform action to perform: `plan` (review changes only), `apply` (apply changes), `destroy` (destroy resources), or `state` (run `state rm`) |
 | `action-arguments` | string | `''` | No | Optional additional arguments to pass to the Terraform action (e.g., `-target=module.example`) |
 | `working-directory` | string | `.` | No | The location containing the terraform related files |
@@ -78,7 +78,7 @@ Detects Lambda functions (Python or Node.js) under the working directory and bui
 | --- | --- | --- | --- | --- |
 | `environment` | string | - | Yes | The target environment (dev, stg, prod), required when s3-bucket is provided |
 | `region` | string | - | Yes | AWS region for the S3 bucket |
-| `working_directory` | string | `.` | No | The location containing the lambda subfolders to build |
+| `working-directory` | string | `.` | No | The location containing the lambda subfolders to build |
 | `full-rebuild` | boolean | `false` | No | Whether to perform a full rebuild of all lambdas (true/false) |
 
 ### Example
@@ -90,7 +90,7 @@ jobs:
     with:
       environment: dev
       region: eu-west-1
-      working_directory: lambdas
+      working-directory: lambdas
       full-rebuild: true
     secrets: inherit
 ```

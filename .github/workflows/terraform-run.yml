@@ -19,7 +19,7 @@ on:
         description: 'When true, Terraform treats the run as global (no region in workspace/varfile/terraform env), while AWS CLI still uses the provided region.'
         type: boolean
         default: false
-      validation_environment:
+      validation-environment:
         description: 'Optional validation environment suffix (e.g., val1). When set, it is appended to Terraform workspace and Project tag.'
         type: string
         default: ''
@@ -60,7 +60,7 @@ env:
   AWS_REGION: ${{ inputs.region }}
   AWS_ENDPOINT_URL: ${{ vars.STS_ENDPOINT }}
   TERRAFORM_REGION: ${{ inputs.global && 'global' || inputs.region }}
-  VALIDATION_ENVIRONMENT: ${{ inputs.validation_environment }}
+  VALIDATION_ENVIRONMENT: ${{ inputs.validation-environment }}
 
 jobs:
   repo_details:
