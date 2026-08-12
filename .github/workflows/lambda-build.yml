@@ -14,6 +14,7 @@ on:
       working-directory:
         description: 'The location containing the lambda subfolders to build'
         type: string
+        required: false
         default: '.'
       full-rebuild:
         description: 'Whether to perform a full rebuild of all lambdas (true/false)'
@@ -402,10 +403,11 @@ jobs:
       shell: bash
       env:
         WORKINGDIR: ${{ inputs.working-directory }}
+        PRPATH: ${{ github.event_name == 'pull_request' && format('pr-{0}/', github.event.pull_request.number) || '' }}
       run: |
         STRIPPED_WORKDIR="${WORKINGDIR#./}"
         CORE_ACCOUNT=$(aws ssm get-parameter --name "/terraform-core/global/central-account/account-id" --with-decryption --query Parameter.Value --output text)
         echo "::add-mask::$CORE_ACCOUNT"
-        aws s3 cp "$WORKINGDIR/" "s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${CORE_ACCOUNT}/${REPO_NAME}/${ENV_NAME}/${STRIPPED_WORKDIR}/" \
+        aws s3 cp "$WORKINGDIR/" "s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${CORE_ACCOUNT}/${REPO_NAME}/${ENV_NAME}/${PRPATH}${STRIPPED_WORKDIR}/" \
           --recursive --exclude "*" --include "*.zip" --no-progress
-        echo "Lambda packages uploaded to s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${CORE_ACCOUNT}/${REPO_NAME}/${ENV_NAME}/${STRIPPED_WORKDIR}/"
+        echo "Lambda packages uploaded to s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${CORE_ACCOUNT}/${REPO_NAME}/${ENV_NAME}/${PRPATH}${STRIPPED_WORKDIR}/"
