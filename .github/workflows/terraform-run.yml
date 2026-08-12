@@ -152,18 +152,14 @@ jobs:
 
         BUCKET_PATH="s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${{ steps.get_core_params.outputs.core_account }}/${REPO_NAME}/${ENV_NAME}"
 
+        aws s3 sync "${BUCKET_PATH}/${STRIPPED_WORKDIR}/" "${WORKINGDIR}/" --no-progress
+        echo "Lambda packages downloaded from ${BUCKET_PATH}/${STRIPPED_WORKDIR}/"
+        
         if [[ -n "$PR_PATH" ]]; then
           echo "PR detected (#${{ github.event.pull_request.number }}), attempting PR-specific artifacts path..."
           if aws s3 sync "${BUCKET_PATH}/${PR_PATH}${STRIPPED_WORKDIR}/" "${WORKINGDIR}/" --no-progress; then
             echo "Lambda packages downloaded from ${BUCKET_PATH}/${PR_PATH}${STRIPPED_WORKDIR}/"
-          else
-            echo "PR-specific path not found (${BUCKET_PATH}/${PR_PATH}${STRIPPED_WORKDIR}/); falling back to shared path..."
-            aws s3 sync "${BUCKET_PATH}/${STRIPPED_WORKDIR}/" "${WORKINGDIR}/" --no-progress
-            echo "Lambda packages downloaded from ${BUCKET_PATH}/${STRIPPED_WORKDIR}/"
           fi
-        else
-          aws s3 sync "${BUCKET_PATH}/${STRIPPED_WORKDIR}/" "${WORKINGDIR}/" --no-progress
-          echo "Lambda packages downloaded from ${BUCKET_PATH}/${STRIPPED_WORKDIR}/"
         fi
 
     - name: Get S3 Backend configuration for storing shared state files
