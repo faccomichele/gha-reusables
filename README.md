@@ -77,6 +77,7 @@ Detects Lambda functions (Python or Node.js) under the working directory and bui
 | Input | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `environment` | string | - | Yes | The target environment (dev, stg, prod), required when s3-bucket is provided |
+| `environment-prefix` | string | `''` | No | Optional prefix for the environment name (e.g., `myorg-`). When set, it is prepended to the environment name and used in the Terraform workspace and Project tag. |
 | `region` | string | - | Yes | AWS region for the S3 bucket |
 | `working-directory` | string | `.` | No | The location containing the lambda subfolders to build |
 | `full-rebuild` | boolean | `false` | No | Whether to perform a full rebuild of all lambdas (true/false) |
@@ -104,6 +105,7 @@ Detects Dockerfiles in subdirectories of the working directory and builds each i
 | Input | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `environment` | string | - | Yes | The target environment (dev, stg, prod), required when s3-bucket is provided |
+| `environment-prefix` | string | `''` | No | Optional prefix for the environment name (e.g., `myorg-`). When set, it is prepended to the environment name and used in the Terraform workspace and Project tag. |
 | `region` | string | - | Yes | AWS region for the S3 bucket |
 | `working-directory` | string | `.` | No | The directory containing subdirectories with Dockerfiles |
 | `push-to-ecr` | boolean | `true` | No | A switch that sets whether to push the built image to ECR or not |
@@ -136,6 +138,7 @@ Downloads the Terraform output artifact produced by `terraform-run.yml` (with `u
 | Input | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `environment` | string | - | Yes | The target environment (dev, stg, prod), required when s3-bucket is provided |
+| `environment-prefix` | string | `''` | No | Optional prefix for the environment name (e.g., `myorg-`). When set, it is prepended to the environment name and used in the Terraform workspace and Project tag. |
 | `region` | string | - | Yes | AWS region for the S3 bucket |
 | `working-directory` | string | `.` | No | The location containing the files to be synced to S3 |
 

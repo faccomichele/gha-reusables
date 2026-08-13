@@ -7,6 +7,10 @@ on:
         description: 'The target environment (dev, stg, prod), required when s3-bucket is provided'
         type: string
         required: true
+      environment-prefix:
+        description: 'Optional prefix for the environment name (e.g., "myorg-"). When set, it is prepended to the environment name and used in the Terraform workspace and Project tag.'
+        type: string
+        default: ''
       region:
         description: 'AWS region for the S3 bucket'
         type: string
@@ -208,9 +212,9 @@ jobs:
         echo "Detected lambdas matrix: $LAMBDAS"
 
   build_lambdas:
-    name: Build ${{ matrix.lambda.path }}${{ matrix.lambda.path != '' && '/' || '' }}${{ matrix.lambda.folder }} (${{ matrix.lambda.type }})
-    runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
-    environment: ${{ inputs.environment }}
+    name: Build ${{ matrix.lambda.path }}${{ matrix.lambda.path != '' && '/' || '' }}${{ matrix.lambda.folder }} (${{ matrix.lambda.type }}) (${{ inputs.environment-prefix != '' && format('{0}-{1}', inputs.environment-prefix, inputs.environment) || inputs.environment }}_${{ inputs.region }})
+    runs-on: ${{ vars.RUNNERS_ARM64 || inputs.environment-prefix == 'local' && 'self-hosted-linux-arm64' || 'ubuntu-24.04-arm' }}
+    environment: ${{ inputs.environment-prefix != '' && format('{0}-{1}', inputs.environment-prefix, inputs.environment) || inputs.environment }}
     if: needs.detect_lambdas.outputs.has_lambdas == 'true'
     strategy:
       fail-fast: false
@@ -237,12 +241,14 @@ jobs:
       uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
       with:
         python-version: ${{ vars.PYTHON_VERSION || '3.13' }}
+        cache: 'pip'
 
     - name: Setup Node.js
       if: matrix.lambda.type == 'nodejs'
       uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
       with:
         node-version: ${{ vars.NODE_VERSION || '24' }}
+        cache: 'npm'
 
     - name: Build Python Lambda
       if: matrix.lambda.type == 'python'
