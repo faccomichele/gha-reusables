@@ -208,6 +208,12 @@ jobs:
 
         # Unset temporary credentials so they do not persist to later steps
         unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN || true
+
+    - name: Setup Python
+      uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+      with:
+        python-version: ${{ vars.PYTHON_VERSION || '3.13' }}
+        cache: 'pip'
       
     - name: Configure Terraform
       uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # 4.0.0
