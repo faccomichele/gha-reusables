@@ -45,7 +45,7 @@ jobs:
                       concurrencyIndent = undefined;
                     } else if (
                       concurrencyIndent !== undefined &&
-                      /^\s*group:\s*merged(?:\s*#.*)?$/.test(line)
+                      /^\s*group:\s*(?:merged|["']merged["'])(?:\s*#.*)?$/.test(line)
                     ) {
                       hasMergedConcurrency = true;
                       break;
