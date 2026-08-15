@@ -32,10 +32,26 @@ jobs:
                     ref: run.head_sha
                   });
                   const content = Buffer.from(workflow.data.content, 'base64').toString();
-                  mergedConcurrency.set(
-                    key,
-                    /concurrency:\s*(?:\n\s+.*)*\n\s+group:\s*merged(?:\s*#.*)?\s*$/m.test(content)
-                  );
+                  let concurrencyIndent;
+                  let hasMergedConcurrency = false;
+                  for (const line of content.split(/\r?\n/)) {
+                    const indentation = line.search(/\S|$/);
+                    if (/^\s*concurrency:\s*(?:#.*)?$/.test(line)) {
+                      concurrencyIndent = indentation;
+                    } else if (
+                      concurrencyIndent !== undefined &&
+                      indentation <= concurrencyIndent
+                    ) {
+                      concurrencyIndent = undefined;
+                    } else if (
+                      concurrencyIndent !== undefined &&
+                      /^\s*group:\s*merged(?:\s*#.*)?$/.test(line)
+                    ) {
+                      hasMergedConcurrency = true;
+                      break;
+                    }
+                  }
+                  mergedConcurrency.set(key, hasMergedConcurrency);
                 } catch {
                   mergedConcurrency.set(key, false);
                 }
