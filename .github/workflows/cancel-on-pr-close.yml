@@ -21,7 +21,7 @@ jobs:
               head_sha: context.payload.pull_request.head.sha
             });
             for (const run of runs.data.workflow_runs) {
-              if (run.status === 'in_progress' || run.status === 'queued') {
+              if (run.id !== context.runId && (run.status === 'in_progress' || run.status === 'queued')) {
                 await github.rest.actions.cancelWorkflowRun({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
