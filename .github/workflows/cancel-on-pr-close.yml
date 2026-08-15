@@ -35,6 +35,9 @@ jobs:
                   let concurrencyIndent;
                   let hasMergedConcurrency = false;
                   for (const line of content.split(/\r?\n/)) {
+                    if (!line.trim()) {
+                      continue;
+                    }
                     const indentation = line.search(/\S|$/);
                     if (/^\s*concurrency:\s*(?:#.*)?$/.test(line)) {
                       concurrencyIndent = indentation;
