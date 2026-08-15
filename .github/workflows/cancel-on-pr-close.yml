@@ -1,0 +1,31 @@
+name: Cancel all PR jobs on PR Close
+
+on:
+  workflow_call:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cancel_pr_jobs:
+    name: Cancel All PR Jobs
+    runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const runs = await github.rest.actions.listWorkflowRunsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head_sha: context.payload.pull_request.head.sha
+            });
+            for (const run of runs.data.workflow_runs) {
+              if (run.status === 'in_progress' || run.status === 'queued') {
+                await github.rest.actions.cancelWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: run.id
+                });
+              }
+            }
