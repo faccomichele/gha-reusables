@@ -140,6 +140,7 @@ jobs:
         STRIPPED_WORKDIR="${STRIPPED_WORKDIR#./}"
         STRIPPED_WORKDIR="${STRIPPED_WORKDIR#/}"
 
+        echo "Local working path is: ${WORKINGDIR}"
         mkdir -p "${WORKINGDIR}"
 
         # Use a PR-specific path (pr-<number>) when running on a pull request so
