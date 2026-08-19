@@ -288,16 +288,20 @@ jobs:
           echo "No requirements.txt found, skipping dependency installation and layer creation"
         fi
 
-        # Create main zip file with only Python code (no dependencies, no requirements.txt)
+        # Create main zip file with Python code and the dependency manifest
         # Only create function package if handler files exist
         if [ "${{ matrix.lambda.has_handler }}" = "true" ]; then
           # Define common exclusions
           COMMON_EXCLUSIONS="-x .git/* -x .DS_Store -x *.log"
-          PYTHON_EXCLUSIONS="-x *.pyc -x __pycache__/* -x python/* -x requirements.txt -x node_modules/*"
+          PYTHON_EXCLUSIONS="-x *.pyc -x __pycache__/* -x python/* -x node_modules/*"
 
-          echo "Creating main package with code only..."
+          echo "Creating main package with code and dependency manifest..."
           if ls *.py 1> /dev/null 2>&1; then
-            zip "${NAME_ONLY}.zip" *.py $COMMON_EXCLUSIONS $PYTHON_EXCLUSIONS
+            PACKAGE_FILES=( *.py )
+            if [ -f "requirements.txt" ]; then
+              PACKAGE_FILES+=( requirements.txt )
+            fi
+            zip "${NAME_ONLY}.zip" "${PACKAGE_FILES[@]}" $COMMON_EXCLUSIONS $PYTHON_EXCLUSIONS
             # Move the package zip up one level (to parent folder)
             mv "${NAME_ONLY}.zip" "../${NAME_ONLY}.zip"
             echo "Lambda package moved to parent: ../${NAME_ONLY}.zip"
@@ -383,16 +387,22 @@ jobs:
           echo "No package.json found, skipping dependency installation and layer creation"
         fi
 
-        # Create main zip file with only JavaScript code (no dependencies, no package files)
+        # Create main zip file with JavaScript code and package manifests
         # Only create function package if handler files exist
         if [ "${{ matrix.lambda.has_handler }}" = "true" ]; then
           # Define common exclusions
           COMMON_EXCLUSIONS="-x .git/* -x .DS_Store -x *.log"
-          NODEJS_EXCLUSIONS="-x node_modules/* -x package.json -x package-lock.json -x nodejs/*"
+          NODEJS_EXCLUSIONS="-x node_modules/* -x nodejs/*"
 
-          echo "Creating main package with code only..."
+          echo "Creating main package with code and package manifests..."
           if ls *.js 1> /dev/null 2>&1; then
-            zip "${NAME_ONLY}.zip" *.js $COMMON_EXCLUSIONS $NODEJS_EXCLUSIONS
+            PACKAGE_FILES=( *.js )
+            for manifest in package.json package-lock.json npm-shrinkwrap.json; do
+              if [ -f "$manifest" ]; then
+                PACKAGE_FILES+=( "$manifest" )
+              fi
+            done
+            zip "${NAME_ONLY}.zip" "${PACKAGE_FILES[@]}" $COMMON_EXCLUSIONS $NODEJS_EXCLUSIONS
             # Move the package zip up one level (to parent folder)
             mv "${NAME_ONLY}.zip" "../${NAME_ONLY}.zip"
             echo "Lambda package moved to parent: ../${NAME_ONLY}.zip"
