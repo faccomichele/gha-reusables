@@ -98,7 +98,7 @@ jobs:
           local aws_status
           local aws_error_file
 
-          if [[ "$parameter_name" == *arn* && "$parameter_name" != *ssm* ]]; then
+          if [[ ( "$parameter_name" == *arn* && "$parameter_name" != *ssm* ) || "$parameter_name" == aws* || "$parameter_name" == /aws* ]]; then
             printf '%s' "$parameter_name"
             return 0
           fi
