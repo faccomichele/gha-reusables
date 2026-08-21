@@ -164,7 +164,7 @@ jobs:
         if [ -n "${{ vars.ECR_REGISTRY }}" ]; then
           ECR_REGISTRY="${{ vars.ECR_REGISTRY }}"
         else
-          ECR_REGISTRY="${{ inputs.push-to-ecr && steps.login_ecr.outputs.registry || 'none' }}"
+          ECR_REGISTRY="${{ inputs.push-to-ecr && steps.login_ecr.outputs.ecr_registry || 'none' }}"
         fi
 
         echo "registry=$ECR_REGISTRY" | tee -a $GITHUB_OUTPUT
