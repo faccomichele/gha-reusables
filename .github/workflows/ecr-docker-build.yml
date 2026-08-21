@@ -16,9 +16,14 @@ on:
         type: string
         required: true
       working-directory:
-        description: 'The directory containing subdirectories with Dockerfiles'
+        description: 'The directory to scan recursively for Dockerfiles'
         type: string
         default: '.'
+      # full-rebuild:
+      #   description: 'Whether to perform a full rebuild of all lambdas (true/false)'
+      #   type: boolean
+      #   required: false
+      #   default: false
       push-to-ecr:
         description: 'A switch that set when pushing the built image to ECR or not'
         type: boolean
@@ -56,9 +61,11 @@ jobs:
     - name: Get source code locally from this repo
       uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-    - name: Detect Dockerfiles in subdirectories
+    - name: Detect Dockerfiles recursively
       id: detect
       shell: bash
+      env:
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
       run: |
         DOCKERFILES='[]'
         HAS_DOCKERFILES='false'
@@ -68,35 +75,51 @@ jobs:
         echo "date_tag=$DATE_TAG" >> $GITHUB_OUTPUT
         
         # Check if working directory exists
-        if [ ! -d "${{ inputs.working-directory }}" ]; then
-          echo "Working directory ${{ inputs.working-directory }} does not exist"
+        if [ ! -d "$WORKING_DIRECTORY" ]; then
+          echo "Working directory $WORKING_DIRECTORY does not exist"
           echo "matrix=$DOCKERFILES" >> $GITHUB_OUTPUT
           echo "has_dockerfiles=$HAS_DOCKERFILES" >> $GITHUB_OUTPUT
           exit 0
         fi
         
-        cd "${{ inputs.working-directory }}"
+        # Normalize the scan directory so generated Dockerfile paths are relative to the repository root.
+        WORKING_DIRECTORY="${WORKING_DIRECTORY#./}"
+        WORKING_DIRECTORY="${WORKING_DIRECTORY%/}"
+        if [ -z "$WORKING_DIRECTORY" ]; then
+          WORKING_DIRECTORY='.'
+        fi
+
+        cd "$WORKING_DIRECTORY"
         
-        # Enable nullglob to handle case when no directories exist
-        shopt -s nullglob
+        WORKING_DIRECTORY_NAME="${WORKING_DIRECTORY##*/}"
+        if [ "$WORKING_DIRECTORY_NAME" = '.' ]; then
+          WORKING_DIRECTORY_NAME="${GITHUB_REPOSITORY##*/}"
+        fi
         
-        # Find all subdirectories (one level deep)
-        for dir in */; do
-          # Remove trailing slash
-          dir=${dir%/}
-          
-          # Skip if not a directory
-          if [ ! -d "$dir" ]; then
-            continue
+        # Find direct and nested Dockerfiles in deterministic order.
+        while IFS= read -r -d '' dockerfile; do
+          relative_dockerfile="${dockerfile#./}"
+
+          if [ "$relative_dockerfile" = 'Dockerfile' ]; then
+            image_folder="$WORKING_DIRECTORY_NAME"
+          else
+            image_folder="${relative_dockerfile%/Dockerfile}"
+            image_folder="${image_folder//\//-}"
           fi
-          
-          # Check for Dockerfile in the subdirectory
-          if [ -f "$dir/Dockerfile" ]; then
-            HAS_DOCKERFILES='true'
-            DOCKERFILES=$(echo "$DOCKERFILES" | jq -c ". += [{\"folder\": \"$dir\"}]")
-            echo "Detected Dockerfile in: $dir"
+
+          if [ "$WORKING_DIRECTORY" = '.' ]; then
+            dockerfile_path="$relative_dockerfile"
+          else
+            dockerfile_path="$WORKING_DIRECTORY/$relative_dockerfile"
           fi
-        done
+
+          HAS_DOCKERFILES='true'
+          DOCKERFILES=$(jq -c \
+            --arg path "$dockerfile_path" \
+            --arg folder "$image_folder" \
+            '. += [{"path": $path, "folder": $folder}]' <<< "$DOCKERFILES")
+          echo "Detected Dockerfile at: $dockerfile_path (image suffix: $image_folder)"
+        done < <(find . -type f -name Dockerfile -not -path './.git/*' -print0 | sort -z)
         
         echo "matrix=$DOCKERFILES" >> $GITHUB_OUTPUT
         echo "has_dockerfiles=$HAS_DOCKERFILES" >> $GITHUB_OUTPUT
@@ -146,7 +169,7 @@ jobs:
 
         echo "registry=$ECR_REGISTRY" | tee -a $GITHUB_OUTPUT
 
-        # Use folder name as image name
+        # Use the normalized Dockerfile path as the image name suffix
         IMAGE_NAME="${REPO_NAME}-${{ matrix.dockerfile.folder }}-${ENV_NAME}"
         
         # Construct full image name
@@ -241,8 +264,8 @@ jobs:
     - name: Build and push Docker image
       uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
       with:
-        context: ${{ inputs.working-directory }}/${{ matrix.dockerfile.folder }}
-        file: ${{ inputs.working-directory }}/${{ matrix.dockerfile.folder }}/Dockerfile
+        context: .
+        file: ${{ matrix.dockerfile.path }}
         push: ${{ inputs.push-to-ecr }}
         tags: ${{ steps.tags.outputs.tags }}
         build-args: ${{ steps.build_args.outputs.args }}

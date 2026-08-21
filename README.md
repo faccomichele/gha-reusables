@@ -98,7 +98,7 @@ jobs:
 
 ## ecr-docker-build.yml
 
-Detects Dockerfiles in subdirectories of the working directory and builds each image with Buildx, tagging with `latest`, a date tag, and the commit SHA. Optionally pushes to ECR (creating the repository if it does not exist).
+Recursively detects Dockerfiles under the working directory and builds each image with Buildx, tagging with `latest`, a date tag, and the commit SHA. Each Dockerfile gets its own ECR repository using its normalized path as the repository suffix. Builds use the repository root as the Docker context, so Dockerfiles can copy files from other project directories and the root `.dockerignore` is honored. Optionally pushes to ECR (creating the repository if it does not exist).
 
 ### Inputs
 
@@ -107,7 +107,7 @@ Detects Dockerfiles in subdirectories of the working directory and builds each i
 | `environment` | string | - | Yes | The target environment (dev, stg, prod), required when s3-bucket is provided |
 | `environment-prefix` | string | `''` | No | Optional prefix for the environment name (e.g., `myorg-`). When set, it is prepended to the environment name and used in the Terraform workspace and Project tag. |
 | `region` | string | - | Yes | AWS region for the S3 bucket |
-| `working-directory` | string | `.` | No | The directory containing subdirectories with Dockerfiles |
+| `working-directory` | string | `.` | No | The directory to scan recursively for Dockerfiles |
 | `push-to-ecr` | boolean | `true` | No | A switch that sets whether to push the built image to ECR or not |
 
 ### Repository variables
