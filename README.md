@@ -147,7 +147,7 @@ Downloads the Terraform output artifact produced by `terraform-run.yml` (with `u
 
 ### Terraform outputs
 
-The workflow expects the Terraform state to expose outputs named `website_bucket_name` and `cloudfront_distribution_id`, and uses their values directly for the S3 sync and CloudFront invalidation steps.
+The workflow expects the Terraform state to expose outputs named `website_bucket_name` and `cloudfront_distribution_id`. If those output values refer to SSM parameters, they are resolved first; otherwise their raw Terraform output values are used directly for the S3 sync and CloudFront invalidation steps.
 
 ### Example
 
