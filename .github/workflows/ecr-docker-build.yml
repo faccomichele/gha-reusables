@@ -19,11 +19,11 @@ on:
         description: 'The directory to scan recursively for Dockerfiles'
         type: string
         default: '.'
-      # full-rebuild:
-      #   description: 'Whether to perform a full rebuild of all lambdas (true/false)'
-      #   type: boolean
-      #   required: false
-      #   default: false
+      full-rebuild:
+        description: 'Whether to perform a full rebuild of all Docker images (true/false)'
+        type: boolean
+        required: false
+        default: false
       push-to-ecr:
         description: 'A switch that set when pushing the built image to ECR or not'
         type: boolean
@@ -60,19 +60,102 @@ jobs:
     steps:
     - name: Get source code locally from this repo
       uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      with:
+        fetch-depth: ${{ inputs.full-rebuild && 1 || 0 }}
 
     - name: Detect Dockerfiles recursively
       id: detect
       shell: bash
       env:
         WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        FULL_REBUILD: ${{ inputs.full-rebuild }}
+        EVENT_BEFORE: ${{ github.event.before }}
+        CURRENT_SHA: ${{ github.sha }}
       run: |
         DOCKERFILES='[]'
         HAS_DOCKERFILES='false'
+        CHANGED_FILES=''
+        CHANGES_AVAILABLE='true'
+        REPOSITORY_ROOT="$PWD"
+
+        path_changed() {
+          local target="$1"
+          local changed_file
+
+          while IFS= read -r changed_file; do
+            if [ "$changed_file" = "$target" ]; then
+              return 0
+            fi
+          done <<< "$CHANGED_FILES"
+
+          return 1
+        }
+
+        dependencies_match_changed_files() {
+          local dependencies_file="$1"
+          local dependency
+          local changed_file
+          local directory_entry
+
+          while IFS= read -r dependency || [ -n "$dependency" ]; do
+            dependency="${dependency%$'\r'}"
+            if [ -z "${dependency//[[:space:]]/}" ]; then
+              continue
+            fi
+
+            directory_entry='false'
+            if [[ "$dependency" == */ ]]; then
+              directory_entry='true'
+            fi
+
+            dependency="${dependency#/}"
+            dependency="${dependency#./}"
+
+            while IFS= read -r changed_file; do
+              if [ "$directory_entry" = 'true' ]; then
+                if [[ "$changed_file" == "$dependency"* ]]; then
+                  return 0
+                fi
+              elif [ "$changed_file" = "$dependency" ]; then
+                return 0
+              fi
+            done <<< "$CHANGED_FILES"
+          done < "$dependencies_file"
+
+          return 1
+        }
         
         # Generate date tag once for all images in this workflow run
         DATE_TAG=$(date -u +'%Y.%m.%d')
         echo "date_tag=$DATE_TAG" >> $GITHUB_OUTPUT
+
+        if [ "$FULL_REBUILD" = 'false' ]; then
+          CHANGES_AVAILABLE='false'
+
+          if [ -n "$EVENT_BEFORE" ] && [ "$EVENT_BEFORE" != '0000000000000000000000000000000000000000' ] && [ -n "$CURRENT_SHA" ]; then
+            if CHANGED_FILES=$(git diff --name-only "$EVENT_BEFORE" "$CURRENT_SHA" 2>/dev/null); then
+              CHANGES_AVAILABLE='true'
+              echo "Changed files detected from $EVENT_BEFORE to $CURRENT_SHA:"
+            fi
+          fi
+
+          if [ "$CHANGES_AVAILABLE" = 'false' ]; then
+            if CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null); then
+              CHANGES_AVAILABLE='true'
+              echo 'Changed files detected from HEAD~1 to HEAD:'
+            fi
+          fi
+
+          if [ "$CHANGES_AVAILABLE" = 'true' ]; then
+            if [ -n "$CHANGED_FILES" ]; then
+              echo "$CHANGED_FILES"
+            else
+              echo 'No changed files found in the selected commit range'
+            fi
+          else
+            echo 'Warning: could not determine changed files; Dockerfiles with dependencies.txt will be skipped'
+          fi
+        fi
         
         # Check if working directory exists
         if [ ! -d "$WORKING_DIRECTORY" ]; then
@@ -111,6 +194,30 @@ jobs:
             dockerfile_path="$relative_dockerfile"
           else
             dockerfile_path="$WORKING_DIRECTORY/$relative_dockerfile"
+          fi
+
+          dockerfile_directory="${dockerfile_path%/*}"
+          if [ "$dockerfile_directory" = "$dockerfile_path" ]; then
+            dockerfile_directory='.'
+          fi
+
+          if [ "$dockerfile_directory" = '.' ]; then
+            dependencies_file='dependencies.txt'
+          else
+            dependencies_file="$dockerfile_directory/dependencies.txt"
+          fi
+
+          SHOULD_BUILD='true'
+          if [ "$FULL_REBUILD" = 'false' ] && [ -f "$REPOSITORY_ROOT/$dependencies_file" ]; then
+            SHOULD_BUILD='false'
+            if [ "$CHANGES_AVAILABLE" = 'true' ] && { path_changed "$dockerfile_path" || path_changed "$dependencies_file" || dependencies_match_changed_files "$REPOSITORY_ROOT/$dependencies_file"; }; then
+              SHOULD_BUILD='true'
+            fi
+          fi
+
+          if [ "$SHOULD_BUILD" = 'false' ]; then
+            echo "Skipping Dockerfile at $dockerfile_path: no matching changes in $dependencies_file"
+            continue
           fi
 
           HAS_DOCKERFILES='true'

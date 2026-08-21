@@ -88,23 +88,33 @@ jobs:
           BEFORE="${{ github.event.before }}"
           SHA="${{ github.sha }}"
           CHANGED_FILES=""
+          CHANGES_AVAILABLE="false"
 
           # Prefer an explicit before/after range (available on push events)
-          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
-            CHANGED_FILES=$(git diff --name-only "$BEFORE" "$SHA" 2>/dev/null || true)
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && [ -n "$SHA" ]; then
+            if CHANGED_FILES=$(git diff --name-only "$BEFORE" "$SHA" 2>/dev/null); then
+              CHANGES_AVAILABLE="true"
+              echo "Changed files detected from $BEFORE to $SHA:"
+            fi
           fi
 
-          # Fall back to comparing HEAD against its parent
-          if [ -z "$CHANGED_FILES" ]; then
-            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+          # Fall back to comparing HEAD against its parent only when the event range is unavailable
+          if [ "$CHANGES_AVAILABLE" = "false" ]; then
+            if CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null); then
+              CHANGES_AVAILABLE="true"
+              echo "Changed files detected from HEAD~1 to HEAD:"
+            fi
           fi
 
-          if [ -z "$CHANGED_FILES" ]; then
+          if [ "$CHANGES_AVAILABLE" = "false" ]; then
             echo "Warning: could not determine changed files; falling back to full rebuild"
             FULL_REBUILD="true"
           else
-            echo "Changed files detected:"
-            echo "$CHANGED_FILES"
+            if [ -n "$CHANGED_FILES" ]; then
+              echo "$CHANGED_FILES"
+            else
+              echo "No changed files found in the selected commit range"
+            fi
 
             # Normalize working-directory prefix for path stripping
             WORKDIR="${{ inputs.working-directory }}"
