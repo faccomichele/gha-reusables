@@ -105,28 +105,33 @@ jobs:
           local parameter_name=$1
           local aws_output
           local aws_status
+          local aws_error_file
 
+          aws_error_file=$(mktemp)
           set +e
           aws_output=$(aws ssm get-parameter \
             --name "$parameter_name" \
             --with-decryption \
             --query 'Parameter.Value' \
-            --output text 2>&1)
+            --output text 2>"$aws_error_file")
           aws_status=$?
           set -e
 
           if [ $aws_status -eq 0 ]; then
+            rm -f "$aws_error_file"
             printf '%s' "$aws_output"
             return 0
           fi
 
-          if printf '%s' "$aws_output" | grep -q 'ParameterNotFound'; then
+          if grep -q 'ParameterNotFound' "$aws_error_file"; then
+            rm -f "$aws_error_file"
             printf '%s' "$parameter_name"
             return 0
           fi
 
           echo "Error: Unable to resolve '${parameter_name}' from SSM" >&2
-          echo "$aws_output" >&2
+          cat "$aws_error_file" >&2
+          rm -f "$aws_error_file"
           return $aws_status
         }
 
