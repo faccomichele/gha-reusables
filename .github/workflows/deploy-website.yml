@@ -98,6 +98,11 @@ jobs:
           local aws_status
           local aws_error_file
 
+          if [[ "$parameter_name" == *arn* && "$parameter_name" != *ssm* ]]; then
+            printf '%s' "$parameter_name"
+            return 0
+          fi
+
           aws_error_file=$(mktemp)
           set +e
           aws_output=$(aws ssm get-parameter \
