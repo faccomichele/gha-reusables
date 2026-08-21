@@ -134,7 +134,7 @@ jobs:
 
 ## deploy-website.yml
 
-Downloads the Terraform output artifact produced by `terraform-run.yml` (with `upload-output-artifact: true`), replaces `__KEY__` placeholders in the working directory files with values resolved from SSM parameters (as defined by the Terraform outputs), syncs the files to the website S3 bucket, and creates a CloudFront invalidation (all paths or only changed paths).
+Downloads the Terraform output artifact produced by `terraform-run.yml` (with `upload-output-artifact: true`), replaces `__KEY__` placeholders in the working directory files with values resolved from SSM parameters when the Terraform output value is a parameter name (otherwise the raw Terraform output value is used), syncs the files to the website S3 bucket, and creates a CloudFront invalidation (all paths or only changed paths).
 
 ### Inputs
 
@@ -147,7 +147,7 @@ Downloads the Terraform output artifact produced by `terraform-run.yml` (with `u
 
 ### Terraform outputs
 
-The workflow expects the Terraform state to expose outputs named `website_bucket_name` and `cloudfront_distribution_id` whose values are SSM parameter names.
+The workflow expects the Terraform state to expose outputs named `website_bucket_name` and `cloudfront_distribution_id`, and uses their values directly for the S3 sync and CloudFront invalidation steps.
 
 ### Example
 
