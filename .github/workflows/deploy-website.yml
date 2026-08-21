@@ -173,6 +173,7 @@ jobs:
         WEBSITE_BUCKET_PARAM=$(jq -r '.website_bucket_name.value // empty' "$TF_OUTPUT_FILE")
         CLOUDFRONT_ID_PARAM=$(jq -r '.cloudfront_distribution_id.value // empty' "$TF_OUTPUT_FILE")
 
+        echo "Resolving '${WEBSITE_BUCKET_PARAM}' from SSM"
         if [ -n "$WEBSITE_BUCKET_PARAM" ]; then
           WEBSITE_BUCKET=$(aws ssm get-parameter --name "$WEBSITE_BUCKET_PARAM" --with-decryption --query 'Parameter.Value' --output text)
           echo "::add-mask::$WEBSITE_BUCKET"
@@ -180,6 +181,7 @@ jobs:
           WEBSITE_BUCKET=""
         fi
 
+        echo "Resolving '${CLOUDFRONT_ID_PARAM}' from SSM"
         if [ -n "$CLOUDFRONT_ID_PARAM" ]; then
           CLOUDFRONT_ID=$(aws ssm get-parameter --name "$CLOUDFRONT_ID_PARAM" --with-decryption --query 'Parameter.Value' --output text)
           echo "::add-mask::$CLOUDFRONT_ID"

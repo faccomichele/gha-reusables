@@ -98,7 +98,9 @@ jobs:
 
 ## ecr-docker-build.yml
 
-Recursively detects Dockerfiles under the working directory and builds each image with Buildx, tagging with `latest`, a date tag, and the commit SHA. Each Dockerfile gets its own ECR repository using its normalized path as the repository suffix. Builds use the repository root as the Docker context, so Dockerfiles can copy files from other project directories and the root `.dockerignore` is honored. Optionally pushes to ECR (creating the repository if it does not exist).
+Recursively detects Dockerfiles under the working directory and builds each selected image with Buildx, tagging with `latest`, a date tag, and the commit SHA. Each Dockerfile gets its own ECR repository using its normalized path as the repository suffix. Builds use the repository root as the Docker context, so Dockerfiles can copy files from other project directories and the root `.dockerignore` is honored. Optionally pushes to ECR (creating the repository if it does not exist).
+
+When `full-rebuild` is `true`, every Dockerfile is built. When it is `false`, a Dockerfile without a sibling `dependencies.txt` is also always built. For a Dockerfile with a sibling `dependencies.txt`, the Dockerfile is built when the Dockerfile or manifest changes, or when a changed repository-root-relative path matches an entry in the manifest. Entries ending in `/` match recursively beneath that directory; all other entries match one exact file. An optional leading `/` is ignored, so `include.dll` matches `include.dll`, `/src/include.dll` matches `src/include.dll`, and `/src/` matches files below `src/`. Blank lines are ignored and entries do not support glob patterns. The workflow uses the full push range when available and falls back to the previous commit; if no changed-file range can be determined, manifest-backed Dockerfiles are skipped while Dockerfiles without manifests still build.
 
 ### Inputs
 
@@ -108,6 +110,7 @@ Recursively detects Dockerfiles under the working directory and builds each imag
 | `environment-prefix` | string | `''` | No | Optional prefix for the environment name (e.g., `myorg-`). When set, it is prepended to the environment name and used in the Terraform workspace and Project tag. |
 | `region` | string | - | Yes | AWS region for the S3 bucket |
 | `working-directory` | string | `.` | No | The directory to scan recursively for Dockerfiles |
+| `full-rebuild` | boolean | `false` | No | Whether to build every detected Dockerfile, ignoring `dependencies.txt` filtering |
 | `push-to-ecr` | boolean | `true` | No | A switch that sets whether to push the built image to ECR or not |
 
 ### Repository variables
