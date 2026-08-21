@@ -91,6 +91,43 @@ jobs:
         fi
         
         echo "Processing Terraform outputs..."
+
+        resolve_parameter_value() {
+          local parameter_name=$1
+          local aws_output
+          local aws_status
+          local aws_error_file
+
+          aws_error_file=$(mktemp)
+          set +e
+          aws_output=$(aws ssm get-parameter \
+            --name "$parameter_name" \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text 2>"$aws_error_file")
+          aws_status=$?
+          set -e
+
+          if [ $aws_status -eq 0 ]; then
+            rm -f "$aws_error_file"
+            printf '%s' "$aws_output"
+            return 0
+          fi
+
+          if grep -q 'ParameterNotFound' "$aws_error_file"; then
+            echo "Warning: '${parameter_name}' was not found in SSM; using the Terraform output value directly" >&2
+            rm -f "$aws_error_file"
+            printf '%s' "$parameter_name"
+            return 0
+          fi
+
+          echo "Error: Unable to resolve '${parameter_name}' from SSM" >&2
+          cat "$aws_error_file" >&2
+          rm -f "$aws_error_file"
+          return $aws_status
+        }
+
+        export -f resolve_parameter_value
         
         # Create a temporary script for all replacements
         REPLACE_SCRIPT="/tmp/replace_outputs.sh"
@@ -101,16 +138,6 @@ jobs:
         TF_OUTPUT_FILE="$1"
         WORKING_DIR="$2"
 
-        resolve_parameter_value() {
-          local parameter_name=$1
-
-          aws ssm get-parameter \
-            --name "$parameter_name" \
-            --with-decryption \
-            --query 'Parameter.Value' \
-            --output text
-        }
-
         escape_sed_replacement() {
           printf '%s' "$1" | sed -e 's/[&|\\]/\\&/g'
         }
@@ -118,14 +145,14 @@ jobs:
         # Function to perform sed replacement
         perform_replacement() {
           local key=$1
-          local parameter_name=$2
+          local output_value=$2
           local value
           local pattern="__${key}__"
 
-          value=$(resolve_parameter_value "$parameter_name")
+          value=$(resolve_parameter_value "$output_value")
 
           if [ "$value" = "None" ] || [ -z "$value" ]; then
-            echo "Error: SSM parameter for ${pattern} returned an empty value"
+            echo "Error: Terraform output for ${pattern} resolved to an empty value"
             exit 1
           fi
 
@@ -140,7 +167,7 @@ jobs:
           local escaped_value
           escaped_value=$(escape_sed_replacement "$value")
 
-          echo "Replacing $pattern from a secure parameter"
+          echo "Replacing $pattern"
           
           # Find all files in working directory (excluding .git and hidden files)
           find "$WORKING_DIR" -type f ! -path "*/.git/*" ! -path "*/.*" -print0 | while IFS= read -r -d '' file; do
@@ -170,20 +197,20 @@ jobs:
         "$REPLACE_SCRIPT" "$TF_OUTPUT_FILE" "${{ inputs.working-directory }}"
         
         # Extract specific outputs needed for AWS operations
-        WEBSITE_BUCKET_PARAM=$(jq -r '.website_bucket_name.value // empty' "$TF_OUTPUT_FILE")
-        CLOUDFRONT_ID_PARAM=$(jq -r '.cloudfront_distribution_id.value // empty' "$TF_OUTPUT_FILE")
+        WEBSITE_BUCKET_OUTPUT=$(jq -r '.website_bucket_name.value // empty' "$TF_OUTPUT_FILE")
+        CLOUDFRONT_ID_OUTPUT=$(jq -r '.cloudfront_distribution_id.value // empty' "$TF_OUTPUT_FILE")
 
-        echo "Resolving '${WEBSITE_BUCKET_PARAM}' from SSM"
-        if [ -n "$WEBSITE_BUCKET_PARAM" ]; then
-          WEBSITE_BUCKET=$(aws ssm get-parameter --name "$WEBSITE_BUCKET_PARAM" --with-decryption --query 'Parameter.Value' --output text)
+        echo "Resolving deployment bucket output"
+        if [ -n "$WEBSITE_BUCKET_OUTPUT" ]; then
+          WEBSITE_BUCKET=$(resolve_parameter_value "$WEBSITE_BUCKET_OUTPUT")
           echo "::add-mask::$WEBSITE_BUCKET"
         else
           WEBSITE_BUCKET=""
         fi
 
-        echo "Resolving '${CLOUDFRONT_ID_PARAM}' from SSM"
-        if [ -n "$CLOUDFRONT_ID_PARAM" ]; then
-          CLOUDFRONT_ID=$(aws ssm get-parameter --name "$CLOUDFRONT_ID_PARAM" --with-decryption --query 'Parameter.Value' --output text)
+        echo "Resolving CloudFront distribution output"
+        if [ -n "$CLOUDFRONT_ID_OUTPUT" ]; then
+          CLOUDFRONT_ID=$(resolve_parameter_value "$CLOUDFRONT_ID_OUTPUT")
           echo "::add-mask::$CLOUDFRONT_ID"
         else
           CLOUDFRONT_ID=""
@@ -192,7 +219,7 @@ jobs:
         echo "website_bucket=$WEBSITE_BUCKET" >> $GITHUB_OUTPUT
         echo "cloudfront_id=$CLOUDFRONT_ID" >> $GITHUB_OUTPUT
         
-        echo "Resolved sensitive Terraform output parameters for deployment"
+        echo "Resolved Terraform outputs for deployment"
         
     - name: Sync files to S3 and capture changed paths
       id: s3_sync
