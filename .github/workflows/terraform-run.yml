@@ -35,6 +35,11 @@ on:
         description: 'The location containing the terraform related files'
         type: string
         default: '.'
+      backend-path:
+        description: 'Optional: The path to the statefile for the backend configuration file (e.g., "ecr"). If not provided, the default path is used.'
+        type: string
+        required: false
+        default: ''
       lambda-working-directory:
         description: 'The location containing the lambda related files to be uploaded to S3 for use in Terraform'
         type: string
@@ -167,12 +172,13 @@ jobs:
       env:
           ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
           USE_PATH_STYLE: ${{ vars.USE_PATH_STYLE || 'false' }}
+          BACKEND_PATH: ${{ inputs.backend-path && format('/{0}', inputs.backend-path) || '' }}
       run: |
         cat > s3backend.tf << EOF
         terraform {
           backend "s3" {
             bucket         = "aws-terraform-core-state-files-${ENV_NAME}-${{ steps.get_core_params.outputs.core_account }}"
-            key            = "${ACCOUNT_ID}/${REPO_NAME}/terraform.tfstate"
+            key            = "${ACCOUNT_ID}/${REPO_NAME}${BACKEND_PATH}/terraform.tfstate"
             region         = "${{ steps.get_core_params.outputs.core_bucket_region }}"
             assume_role    = {
               role_arn = "arn:aws:iam::${{ steps.get_core_params.outputs.core_account }}:role/terraform-core-backend-setup-${ENV_NAME}-TfStateRole-${{ steps.get_core_params.outputs.core_role_secret }}"
