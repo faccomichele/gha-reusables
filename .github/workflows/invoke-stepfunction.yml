@@ -1,0 +1,138 @@
+# Starts a Step Function state machine and polls until the execution reaches
+# a terminal state, reporting success or failure.
+
+name: Invoke Step Function (reusable workflow)
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'The target environment (dev, stg, prod)'
+        type: string
+        required: true
+      environment-prefix:
+        description: 'Optional prefix for the environment name (e.g., "myorg-"). When set, it is prepended to the GitHub Environment name.'
+        type: string
+        default: ''
+      region:
+        description: 'AWS region for the Step Function'
+        type: string
+        required: true
+      step-function-name:
+        description: 'Base name of the Step Function state machine; the environment name is appended to it'
+        type: string
+        required: true
+      timeout-minutes:
+        description: 'Max minutes to wait for the Step Function execution to finish'
+        type: number
+        default: 30
+      sleep-seconds:
+        description: 'Seconds to wait between Step Function status checks'
+        type: number
+        default: 15
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ENV_NAME: ${{ inputs.environment }}
+  AWS_REGION: ${{ inputs.region }}
+  AWS_ENDPOINT_URL: ${{ vars.STS_ENDPOINT }}
+
+concurrency:
+  group: invoke-stepfunction-${{ inputs.environment-prefix }}-${{ inputs.environment }}-${{ inputs.region }}-${{ inputs.step-function-name }}
+  cancel-in-progress: false
+
+jobs:
+  repo_details:
+    name: Get repository details
+    runs-on: ${{ vars.RUNNERS_AMD64 || 'ubuntu-latest' }}
+    outputs:
+      repo-name: ${{ steps.repo_details.outputs.repo-name }}
+      repo-url: ${{ steps.repo_details.outputs.repo-url }}
+    steps:
+    - name: Set branch names
+      id: repo_details
+      uses: faccomichele/gha-composite-repo-details@v1.0.1
+
+  invoke_stepfunction:
+    name: Invoke Step Function "${{ inputs.step-function-name }}" (${{ inputs.environment-prefix != '' && format('{0}-{1}', inputs.environment-prefix, inputs.environment) || inputs.environment }}_${{ inputs.region }})
+    runs-on: ${{ vars.RUNNERS_AMD64 || inputs.environment-prefix == 'local' && 'self-hosted-linux-amd64' || 'ubuntu-latest' }}
+    environment: ${{ inputs.environment-prefix != '' && format('{0}-{1}', inputs.environment-prefix, inputs.environment) || inputs.environment }}
+    needs: repo_details
+    env:
+      REPO_NAME: ${{ needs.repo_details.outputs.repo-name }}
+    steps:
+      - name: Custom AWS Login
+        id: aws_login
+        uses: faccomichele/gha-composite-custom-aws-login@v1.0.2
+        with:
+          account_id: ${{ secrets.ACCOUNT_ID }}
+          role_secret: ${{ secrets.ROLE_SECRET }}
+          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Get AWS account ID
+        id: aws_account
+        shell: bash
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "::add-mask::$ACCOUNT_ID"
+          echo "account_id=$ACCOUNT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Start Step Function execution
+        id: start_execution
+        env:
+          ACCOUNT_ID: ${{ steps.aws_account.outputs.account_id }}
+          STATE_MACHINE_NAME: ${{ inputs.step-function-name }}-${{ inputs.environment }}
+        run: |
+          STATE_MACHINE_ARN="arn:aws:states:${AWS_REGION}:${ACCOUNT_ID}:stateMachine:${STATE_MACHINE_NAME}"
+          EXECUTION_ARN=$(aws stepfunctions start-execution \
+            --state-machine-arn "$STATE_MACHINE_ARN" \
+            --name "gha-${{ github.run_id }}-${{ github.run_attempt }}" \
+            --query "executionArn" --output text)
+          echo "execution_arn=$EXECUTION_ARN" >> "$GITHUB_OUTPUT"
+          echo "Started Step Functions execution: $EXECUTION_ARN"
+
+      - name: Wait for Step Function completion
+        env:
+          EXECUTION_ARN: ${{ steps.start_execution.outputs.execution_arn }}
+          TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+          SLEEP_SECONDS: ${{ inputs.sleep-seconds }}
+        run: |
+          if ! [[ "$SLEEP_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::sleep-seconds must be a positive integer."
+            exit 1
+          fi
+
+          DEADLINE=$((SECONDS + TIMEOUT_MINUTES * 60))
+          while :; do
+            STATUS=$(aws stepfunctions describe-execution \
+              --execution-arn "$EXECUTION_ARN" \
+              --query "status" --output text)
+            echo "Execution status: $STATUS"
+
+            case "$STATUS" in
+              SUCCEEDED)
+                echo "Migration Step Function succeeded."
+                exit 0
+                ;;
+              FAILED|TIMED_OUT|ABORTED)
+                echo "::error::Migration Step Function finished with status ${STATUS}."
+                aws stepfunctions get-execution-history \
+                  --execution-arn "$EXECUTION_ARN" \
+                  --max-results 5 \
+                  --query "reverse(events)[].{time:timestamp,type:type,error:error,cause:cause}" \
+                  --output table || true
+                exit 1
+                ;;
+            esac
+
+            if [ "$SECONDS" -ge "$DEADLINE" ]; then
+              echo "::error::Timed out after ${TIMEOUT_MINUTES} minutes waiting for execution $EXECUTION_ARN (last status: $STATUS)."
+              exit 1
+            fi
+
+            sleep "$SLEEP_SECONDS"
+          done
