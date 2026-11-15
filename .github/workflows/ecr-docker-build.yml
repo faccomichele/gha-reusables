@@ -33,10 +33,10 @@ on:
         type: string
         default: "['amd64']"
     secrets:
-      CHAINGUARD_IDENTITY_ID:
+      CHAINGUARD_USERNAME:
         description: 'Optional Chainguard registry identity ID for cgr.dev'
         required: false
-      CHAINGUARD_TOKEN:
+      CHAINGUARD_PASSWORD:
         description: 'Optional Chainguard registry token for cgr.dev'
         required: false
 
@@ -384,10 +384,10 @@ jobs:
       id: chainguard_credentials
       shell: bash
       env:
-        CHAINGUARD_IDENTITY_ID: ${{ secrets.CHAINGUARD_IDENTITY_ID }}
-        CHAINGUARD_TOKEN: ${{ secrets.CHAINGUARD_TOKEN }}
+        CHAINGUARD_USERNAME: ${{ secrets.CHAINGUARD_USERNAME }}
+        CHAINGUARD_PASSWORD: ${{ secrets.CHAINGUARD_PASSWORD }}
       run: |
-        if [ -n "$CHAINGUARD_IDENTITY_ID" ] && [ -n "$CHAINGUARD_TOKEN" ]; then
+        if [ -n "$CHAINGUARD_USERNAME" ] && [ -n "$CHAINGUARD_PASSWORD" ]; then
           echo "available=true" >> "$GITHUB_OUTPUT"
         else
           echo "available=false" >> "$GITHUB_OUTPUT"
@@ -398,8 +398,8 @@ jobs:
       uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
       with:
         registry: cgr.dev
-        username: ${{ secrets.CHAINGUARD_IDENTITY_ID }}
-        password: ${{ secrets.CHAINGUARD_TOKEN }}
+        username: ${{ secrets.CHAINGUARD_USERNAME }}
+        password: ${{ secrets.CHAINGUARD_PASSWORD }}
 
     - name: Build and push Docker image
       uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
