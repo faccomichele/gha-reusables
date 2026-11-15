@@ -43,6 +43,8 @@ Runs Terraform against a shared state file stored in S3 and generates a Markdown
 | `action` | string | `plan` | No | The Terraform action to perform: `plan` (review changes only), `apply` (apply changes), `destroy` (destroy resources), or `state` (run `state rm`) |
 | `action-arguments` | string | `''` | No | Optional additional arguments to pass to the Terraform action (e.g., `-target=module.example`) |
 | `working-directory` | string | `.` | No | The location containing the terraform related files |
+| `source-repository` | string | `''` | No | Optional public HTTPS GitHub repository URL. Its root contents are recursively merged into `working-directory` without replacing existing paths. |
+| `source-branch` | string | `''` | No | Branch to clone from `source-repository`; required when a source repository is set. |
 | `lambda-working-directory` | string | `./lambdas` | No | The location containing the lambda related files to be uploaded to S3 for use in Terraform |
 | `upload-output-artifact` | boolean | `false` | No | If true, upload the terraform output artifact from the current workflow run, otherwise it skips it |
 | `skip-terraform-report` | boolean | `false` | No | If true, skip generating the Terraform report and adding it to the job summary and PR comment |
@@ -64,6 +66,8 @@ jobs:
       region: eu-west-1
       action: plan
       working-directory: terraform
+      source-repository: https://github.com/your-org/shared-terraform.git
+      source-branch: main
       skip-terraform-report: true
     secrets: inherit
 ```

@@ -35,6 +35,14 @@ on:
         description: 'The location containing the terraform related files'
         type: string
         default: '.'
+      source-repository:
+        description: 'Optional public HTTPS GitHub repository URL whose content is merged into the working directory without overwriting existing files.'
+        type: string
+        default: ''
+      source-branch:
+        description: 'Branch to clone from source-repository. Required when source-repository is set.'
+        type: string
+        default: ''
       backend-path:
         description: 'Optional: The path to the statefile for the backend configuration file (e.g., "ecr"). If not provided, the default path is used.'
         type: string
@@ -102,6 +110,59 @@ jobs:
 
     - name: Get source code locally from this repo
       uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+    - name: Overlay source repository into working directory
+      shell: bash
+      env:
+        SOURCE_REPOSITORY: ${{ inputs.source-repository }}
+        SOURCE_BRANCH: ${{ inputs.source-branch }}
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "$SOURCE_REPOSITORY" ]]; then
+          echo "No source repository configured; skipping."
+          exit 0
+        fi
+
+        if [[ -z "$SOURCE_BRANCH" ]]; then
+          echo "::error::source-branch is required when source-repository is set."
+          exit 1
+        fi
+
+        CLONE_DIR="$(mktemp -d "${RUNNER_TEMP%/}/terraform-source.XXXXXX")"
+        trap 'rm -rf "$CLONE_DIR"' EXIT
+
+        git clone --depth 1 --single-branch --no-tags --branch "$SOURCE_BRANCH" -- "$SOURCE_REPOSITORY" "$CLONE_DIR"
+        mkdir -p -- "$WORKING_DIRECTORY"
+
+        copy_missing() {
+          local source_path="$1"
+          local destination_path="$2"
+          local child
+
+          if [[ -d "$source_path" && ! -L "$source_path" ]]; then
+            if [[ -e "$destination_path" || -L "$destination_path" ]]; then
+              if [[ -d "$destination_path" && ! -L "$destination_path" ]]; then
+                for child in "$source_path"/*; do
+                  copy_missing "$child" "$destination_path/${child##*/}"
+                done
+              fi
+              return 0
+            fi
+          elif [[ -e "$destination_path" || -L "$destination_path" ]]; then
+            return 0
+          fi
+
+          mkdir -p -- "$(dirname -- "$destination_path")"
+          cp -a -- "$source_path" "$destination_path"
+        }
+
+        shopt -s dotglob nullglob
+        for source_path in "$CLONE_DIR"/*; do
+          [[ "${source_path##*/}" == ".git" ]] && continue
+          copy_missing "$source_path" "$WORKING_DIRECTORY/${source_path##*/}"
+        done
 
       # TO DO: Hardcode the script version once stable - Import it to ORG level once ready
     - name: Get the Terraform Report Script
