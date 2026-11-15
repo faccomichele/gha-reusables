@@ -289,7 +289,7 @@ jobs:
         echo "registry=$ECR_REGISTRY" | tee -a $GITHUB_OUTPUT
 
         # Use the normalized Dockerfile path as the image name suffix
-        IMAGE_NAME="${REPO_NAME}-${{ matrix.dockerfile.folder }}-${ENV_NAME}"
+        IMAGE_NAME="${REPO_NAME}/${{ matrix.dockerfile.folder }}/${ENV_NAME}"
         
         # Construct full image name
         FULL_IMAGE_NAME="${ECR_REGISTRY}/${IMAGE_NAME}"
