@@ -122,6 +122,10 @@ When `full-rebuild` is `true`, every Dockerfile is built. When it is `false`, a 
 - `ECR_REGISTRY` - optional ECR registry override; when unset, the registry from the AWS login is used
 - `DOCKER_BUILD_ARGS` - optional comma-separated build args passed to the Docker build
 
+### Optional secrets
+
+- `CHAINGUARD_IDENTITY_ID` and `CHAINGUARD_TOKEN` - optional credentials for logging in to `cgr.dev` before the Docker build. The login step runs only when both secrets are provided; otherwise it is skipped. Existing callers using `secrets: inherit` need no changes.
+
 ### Example
 
 ```yaml
