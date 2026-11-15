@@ -32,6 +32,13 @@ on:
         description: 'A list of architectures for the Docker images (e.g., "[\"amd64\", \"arm64\"]")'
         type: string
         default: "['amd64']"
+    secrets:
+      CHAINGUARD_IDENTITY_ID:
+        description: 'Optional Chainguard registry identity ID for cgr.dev'
+        required: false
+      CHAINGUARD_TOKEN:
+        description: 'Optional Chainguard registry token for cgr.dev'
+        required: false
 
 permissions:
   id-token: write
@@ -372,6 +379,27 @@ jobs:
           echo "$BUILD_ARGS"
           echo "EOF"
         } >> $GITHUB_OUTPUT
+
+    - name: Check for Chainguard credentials
+      id: chainguard_credentials
+      shell: bash
+      env:
+        CHAINGUARD_IDENTITY_ID: ${{ secrets.CHAINGUARD_IDENTITY_ID }}
+        CHAINGUARD_TOKEN: ${{ secrets.CHAINGUARD_TOKEN }}
+      run: |
+        if [ -n "$CHAINGUARD_IDENTITY_ID" ] && [ -n "$CHAINGUARD_TOKEN" ]; then
+          echo "available=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "available=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Log in to Chainguard Registry
+      if: steps.chainguard_credentials.outputs.available == 'true'
+      uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+      with:
+        registry: cgr.dev
+        username: ${{ secrets.CHAINGUARD_IDENTITY_ID }}
+        password: ${{ secrets.CHAINGUARD_TOKEN }}
 
     - name: Build and push Docker image
       uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
