@@ -26,6 +26,8 @@ on:
         required: false
         default: false
 
+cache-mode: read
+
 permissions:
   id-token: write
   contents: read
@@ -233,6 +235,7 @@ jobs:
     needs: [detect_lambdas, repo_details]
     env:
       REPO_NAME: ${{ needs.repo_details.outputs.repo-name }}
+    cache-mode: write
     steps:
     - name: Custom AWS Login
       id: aws_login
@@ -251,14 +254,17 @@ jobs:
       uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
       with:
         python-version: ${{ vars.PYTHON_VERSION || '3.13' }}
-        cache: 'pip'
+        cache: ${{ hashFiles(format('{0}/{1}{2}{3}/requirements.txt', inputs.working-directory, matrix.lambda.path, matrix.lambda.path != '' && '/' || '', matrix.lambda.folder)) != '' && 'pip' || '' }}
+        cache-dependency-path: ${{ format('{0}/{1}{2}{3}/requirements.txt', inputs.working-directory, matrix.lambda.path, matrix.lambda.path != '' && '/' || '', matrix.lambda.folder) }}
 
     - name: Setup Node.js
       if: matrix.lambda.type == 'nodejs'
       uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
       with:
         node-version: ${{ vars.NODE_VERSION || '24' }}
-        cache: 'npm'
+        package-manager-cache: false
+        cache: ${{ hashFiles(format('{0}/{1}{2}{3}/package.json', inputs.working-directory, matrix.lambda.path, matrix.lambda.path != '' && '/' || '', matrix.lambda.folder)) != '' && 'npm' || '' }}
+        cache-dependency-path: ${{ format('{0}/{1}{2}{3}/package.json', inputs.working-directory, matrix.lambda.path, matrix.lambda.path != '' && '/' || '', matrix.lambda.folder) }}
 
     - name: Build Python Lambda
       if: matrix.lambda.type == 'python'

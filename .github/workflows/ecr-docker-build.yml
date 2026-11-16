@@ -257,6 +257,7 @@ jobs:
     env:
       REPO_NAME: ${{ needs.repo_details.outputs.repo-name }}
       REPO_URL: ${{ needs.repo_details.outputs.repo-url }}
+    cache-mode: write
     steps:
     - name: Get source code locally from this repo
       uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -410,8 +411,8 @@ jobs:
         push: ${{ inputs.push-to-ecr }}
         tags: ${{ steps.tags.outputs.tags }}
         build-args: ${{ steps.build_args.outputs.args }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        cache-from: type=gha,scope=${{ matrix.dockerfile.folder }}-${{ matrix.architecture }}
+        cache-to: type=gha,mode=max,scope=${{ matrix.dockerfile.folder }}-${{ matrix.architecture }}
         provenance: false
 
     - name: Parse and display image tags
