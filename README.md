@@ -46,6 +46,7 @@ Runs Terraform against a shared state file stored in S3 and generates a Markdown
 | `source-repository` | string | `''` | No | Optional public HTTPS GitHub repository URL. Its root contents are recursively merged into `working-directory` without replacing existing paths. |
 | `source-branch` | string | `''` | No | Branch to clone from `source-repository`; required when a source repository is set. |
 | `lambda-working-directory` | string | `./lambdas` | No | The location containing the lambda related files to be uploaded to S3 for use in Terraform |
+| `lambda-artifact-repo-names` | string | `[]` | No | Optional JSON array of additional S3 repository-name folders (e.g., `["shared-lambdas"]`). The current repository is fetched first; later sources override earlier paths. |
 | `upload-output-artifact` | boolean | `false` | No | If true, upload the terraform output artifact from the current workflow run, otherwise it skips it |
 | `skip-terraform-report` | boolean | `false` | No | If true, skip generating the Terraform report and adding it to the job summary and PR comment |
 
@@ -66,6 +67,7 @@ jobs:
       region: eu-west-1
       action: plan
       working-directory: terraform
+      lambda-artifact-repo-names: '["shared-lambdas"]'
       source-repository: https://github.com/your-org/shared-terraform.git
       source-branch: main
       skip-terraform-report: true
