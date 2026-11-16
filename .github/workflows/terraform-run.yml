@@ -52,6 +52,10 @@ on:
         description: 'The location containing the lambda related files to be uploaded to S3 for use in Terraform'
         type: string
         default: './lambdas'
+      lambda-artifact-repo-names:
+        description: 'Optional JSON array of additional S3 repository-name folders to download Lambda artifacts from.'
+        type: string
+        default: '[]'
       upload-output-artifact:
         description: 'Optional: If true, upload the terraform output artifact from the current workflow run, otherwise it skips it.'
         type: boolean
@@ -187,45 +191,81 @@ jobs:
         
     - name: Download lambda artifacts from S3 if existing
       shell: bash
-      continue-on-error: true
       env:
         WORKINGDIR: ${{ inputs.lambda-working-directory }}
+        LAMBDA_ARTIFACT_REPO_NAMES: ${{ inputs.lambda-artifact-repo-names }}
       run: |
-        # Normalize variables
+        set -euo pipefail
+
+        if ! jq -e '
+          if type == "array" then
+            all(.[]; type == "string" and length > 0 and . != "." and . != ".." and test("^[A-Za-z0-9._-]+$"))
+          else
+            false
+          end
+        ' <<< "$LAMBDA_ARTIFACT_REPO_NAMES" >/dev/null; then
+          echo '::error::lambda-artifact-repo-names must be a JSON array of repository folder names, for example ["shared-lambdas"].'
+          exit 1
+        fi
+
+        ARTIFACT_REPOS=("$REPO_NAME")
+        while IFS= read -r additional_repo; do
+          ARTIFACT_REPOS+=("$additional_repo")
+        done < <(jq -r '.[]' <<< "$LAMBDA_ARTIFACT_REPO_NAMES")
+
         BASE_WORKDIR="${{ inputs.working-directory }}"
         WD="${WORKINGDIR%/}"
         BASE="${BASE_WORKDIR%/}"
 
         STRIPPED_WORKDIR="$WD"
-        # If base is not just '.' and WD starts with BASE, strip the BASE prefix
         if [[ -n "$BASE" && "$BASE" != "." && ("$WD" == "$BASE" || "$WD" == "$BASE"/*) ]]; then
           STRIPPED_WORKDIR="${WD#${BASE}}"
         fi
 
-        # Remove any leading './' or leading '/' left after stripping
         STRIPPED_WORKDIR="${STRIPPED_WORKDIR#./}"
         STRIPPED_WORKDIR="${STRIPPED_WORKDIR#/}"
 
         echo "Local working path is: ${WORKINGDIR}"
-        mkdir -p "${WORKINGDIR}"
+        mkdir -p -- "${WORKINGDIR}"
 
-        # Use a PR-specific path (pr-<number>) when running on a pull request so
-        # artifacts from concurrent PRs do not overwrite each other
         PR_PATH=""
         if [[ "${{ github.event_name }}" == "pull_request" && -n "${{ github.event.pull_request.number }}" ]]; then
           PR_PATH="pr-${{ github.event.pull_request.number }}/"
         fi
 
-        BUCKET_PATH="s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${{ steps.get_core_params.outputs.core_account }}/${REPO_NAME}/${ENV_NAME}"
+        BUCKET_ROOT="s3://aws-terraform-core-shared-artifacts-${{ inputs.environment }}-${{ steps.get_core_params.outputs.core_account }}"
+        STAGING_DIR="$(mktemp -d)"
+        trap 'rm -rf -- "$STAGING_DIR"' EXIT
 
-        aws s3 sync "${BUCKET_PATH}/${STRIPPED_WORKDIR}/" "${WORKINGDIR}/" --no-progress
-        echo "Lambda packages downloaded from ${BUCKET_PATH}/${STRIPPED_WORKDIR}/"
-        
-        if [[ -n "$PR_PATH" ]]; then
-          echo "PR detected (#${{ github.event.pull_request.number }}), attempting PR-specific artifacts path..."
-          if aws s3 sync "${BUCKET_PATH}/${PR_PATH}${STRIPPED_WORKDIR}/" "${WORKINGDIR}/" --no-progress; then
-            echo "Lambda packages downloaded from ${BUCKET_PATH}/${PR_PATH}${STRIPPED_WORKDIR}/"
+        sync_and_overlay() {
+          local source_path="$1"
+          local stage_name="$2"
+          local stage_path="${STAGING_DIR}/${stage_name}"
+
+          mkdir -p -- "$stage_path"
+          if aws s3 sync "$source_path" "${stage_path}/" --no-progress; then
+            cp -a -- "${stage_path}/." "${WORKINGDIR}/"
+            echo "Lambda packages downloaded from ${source_path}"
+          else
+            echo "::warning::Could not download Lambda packages from ${source_path}; continuing."
           fi
+        }
+
+        SOURCE_INDEX=0
+        for ARTIFACT_REPO in "${ARTIFACT_REPOS[@]}"; do
+          SOURCE_BASE_PATH="${BUCKET_ROOT}/${ARTIFACT_REPO}/${ENV_NAME}"
+          sync_and_overlay "${SOURCE_BASE_PATH}/${STRIPPED_WORKDIR}/" "shared-${SOURCE_INDEX}"
+          SOURCE_INDEX=$((SOURCE_INDEX + 1))
+        done
+
+        if [[ -n "$PR_PATH" ]]; then
+          echo "PR detected (#${{ github.event.pull_request.number }}), attempting PR-specific artifacts paths..."
+          SOURCE_INDEX=0
+          for ARTIFACT_REPO in "${ARTIFACT_REPOS[@]}"; do
+            SOURCE_BASE_PATH="${BUCKET_ROOT}/${ARTIFACT_REPO}/${ENV_NAME}"
+            sync_and_overlay "${SOURCE_BASE_PATH}/${PR_PATH}${STRIPPED_WORKDIR}/" "pr-${SOURCE_INDEX}"
+            SOURCE_INDEX=$((SOURCE_INDEX + 1))
+          done
         fi
 
     - name: Get S3 Backend configuration for storing shared state files
