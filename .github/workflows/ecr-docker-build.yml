@@ -279,12 +279,33 @@ jobs:
     - name: Determine ECR registry and repository
       id: ecr_info
       shell: bash
+      env:
+        CONFIGURED_ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+        LOGIN_ECR_REGISTRY: ${{ steps.login_ecr.outputs.ecr_registry }}
+        CONFIGURED_DOCKER_BUILD_ARGS: ${{ vars.DOCKER_BUILD_ARGS }}
+        DOCKERFILE_PATH: ${{ matrix.dockerfile.path }}
       run: |
-        # Use VARS.ECR_REGISTRY if provided, otherwise use the account from login
-        if [ -n "${{ vars.ECR_REGISTRY }}" ]; then
-          ECR_REGISTRY="${{ vars.ECR_REGISTRY }}"
-        else
-          ECR_REGISTRY="${{ inputs.push-to-ecr && steps.login_ecr.outputs.ecr_registry || 'none' }}"
+        ECR_REGISTRY="$CONFIGURED_ECR_REGISTRY"
+        if [ -z "$ECR_REGISTRY" ] || [ "$ECR_REGISTRY" = 'none' ]; then
+          ECR_REGISTRY="$LOGIN_ECR_REGISTRY"
+        fi
+        if [ -z "$ECR_REGISTRY" ] || [ "$ECR_REGISTRY" = 'none' ]; then
+          if [ -n "$CONFIGURED_DOCKER_BUILD_ARGS" ]; then
+            IFS=',' read -ra ARGS <<< "$CONFIGURED_DOCKER_BUILD_ARGS"
+            for arg in "${ARGS[@]}"; do
+              if [[ "$arg" =~ ^[[:space:]]*ECR_REGISTRY= ]]; then
+                ECR_REGISTRY="${arg#*=}"
+                break
+              fi
+            done
+          fi
+        fi
+        if [ -z "$ECR_REGISTRY" ] || [ "$ECR_REGISTRY" = 'none' ]; then
+          if grep -Eq '^[[:space:]]*ARG[[:space:]]+ECR_REGISTRY([[:space:]=]|$)' "$DOCKERFILE_PATH"; then
+            echo "::error::ECR_REGISTRY is required by $DOCKERFILE_PATH. Set vars.ECR_REGISTRY or include ECR_REGISTRY in vars.DOCKER_BUILD_ARGS."
+            exit 1
+          fi
+          ECR_REGISTRY='none'
         fi
 
         echo "registry=$ECR_REGISTRY" | tee -a $GITHUB_OUTPUT
@@ -349,14 +370,22 @@ jobs:
     - name: Prepare build arguments
       id: build_args
       shell: bash
+      env:
+        CONFIGURED_DOCKER_BUILD_ARGS: ${{ vars.DOCKER_BUILD_ARGS }}
+        ECR_REGISTRY: ${{ steps.ecr_info.outputs.registry }}
       run: |
         BUILD_ARGS=""
 
         # Add build args from VARS if provided
-        if [ -n "${{ vars.DOCKER_BUILD_ARGS }}" ]; then
+        if [ -n "$CONFIGURED_DOCKER_BUILD_ARGS" ]; then
           # Parse comma-separated build args from VARS
-          IFS=',' read -ra ARGS <<< "${{ vars.DOCKER_BUILD_ARGS }}"
+          IFS=',' read -ra ARGS <<< "$CONFIGURED_DOCKER_BUILD_ARGS"
           for arg in "${ARGS[@]}"; do
+            BUILD_ARG_NAME="${arg%%=*}"
+            BUILD_ARG_NAME="${BUILD_ARG_NAME//[[:space:]]/}"
+            if [ "$BUILD_ARG_NAME" = 'ECR_REGISTRY' ]; then
+              continue
+            fi
             if [ -n "$BUILD_ARGS" ]; then
               BUILD_ARGS="${BUILD_ARGS}"$'\n'"${arg}"
             else
@@ -373,6 +402,9 @@ jobs:
         BUILD_ARGS="${BUILD_ARGS}"$'\n'"VCS_REF=${{ github.sha }}"
         BUILD_ARGS="${BUILD_ARGS}"$'\n'"VERSION=${{ github.ref_name }}"
         BUILD_ARGS="${BUILD_ARGS}"$'\n'"ENVIRONMENT=${{ inputs.environment }}"
+        if [ -n "$ECR_REGISTRY" ] && [ "$ECR_REGISTRY" != 'none' ]; then
+          BUILD_ARGS="${BUILD_ARGS}"$'\n'"ECR_REGISTRY=$ECR_REGISTRY"
+        fi
 
         # Use heredoc to properly handle multiline output
         {
