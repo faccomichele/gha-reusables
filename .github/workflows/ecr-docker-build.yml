@@ -322,24 +322,15 @@ jobs:
         echo "Image Name: $IMAGE_NAME"
         echo "Full Image Name: $FULL_IMAGE_NAME"
 
-    - name: Create ECR repository if it doesn't exist
+    - name: Check if ECR repository exists
       if: inputs.push-to-ecr
       shell: bash
       run: |
-        # Check if repository exists, create if not
         if ! aws ecr describe-repositories --repository-names ${{ steps.ecr_info.outputs.image_name }} --region ${{ inputs.region }} 2>/dev/null; then
-          echo "Repository ${{ steps.ecr_info.outputs.image_name }} does not exist, creating..."
-          aws ecr create-repository \
-            --repository-name ${{ steps.ecr_info.outputs.image_name }} \
-            --region ${{ inputs.region }} \
-            --image-scanning-configuration scanOnPush=true \
-            --tags Key=Project,Value=${{ env.REPO_NAME }} \
-                   Key=Environment,Value=${{ inputs.environment }} \
-                   Key=ManagedBy,Value=GitHubActions \
-                   Key=RepositoryURL,Value=${{ env.REPO_URL }}
-          echo "Repository created successfully"
+          echo "Repository ${{ steps.ecr_info.outputs.image_name }} does not exist, exiting..."
+          exit 1
         else
-          echo "Repository ${{ steps.ecr_info.outputs.image_name }} already exists"
+          echo "Repository ${{ steps.ecr_info.outputs.image_name }} already exists, continuing..."
         fi
 
     - name: Generate image tags
