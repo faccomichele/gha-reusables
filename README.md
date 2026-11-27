@@ -76,7 +76,7 @@ jobs:
 
 ## lambda-build.yml
 
-Detects Lambda functions (Python or Node.js) under the working directory and builds each one. Detects changed directories via git diff for incremental builds unless `full-rebuild` is enabled. Builds function packages (code only) and layer packages (dependencies), then uploads all `.zip` artifacts to the shared S3 artifacts bucket so Terraform can use them.
+Detects Lambda functions (Python or Node.js) under the working directory and builds each one. Detects changed directories via git diff for incremental builds unless `full-rebuild` is enabled. Builds function packages and dependency layers, then uploads all `.zip` artifacts to the shared S3 artifacts bucket so Terraform can use them. Node.js builds retain optional dependencies and run `npm audit --omit=dev --audit-level=high`; high or critical production dependency vulnerabilities fail the build.
 
 ### Inputs
 
@@ -86,7 +86,10 @@ Detects Lambda functions (Python or Node.js) under the working directory and bui
 | `environment-prefix` | string | `''` | No | Optional prefix for the environment name (e.g., `myorg-`). When set, it is prepended to the environment name and used in the Terraform workspace and Project tag. |
 | `region` | string | - | Yes | AWS region for the S3 bucket |
 | `working-directory` | string | `.` | No | The location containing the lambda subfolders to build |
-| `full-rebuild` | boolean | `false` | No | Whether to perform a full rebuild of all lambdas (true/false) |
+| `bundle-nodejs` | boolean | `false` | No | Bundle Node.js JavaScript entry points with project-local esbuild before packaging; forces a full rebuild of all detected Lambda folders |
+| `full-rebuild` | boolean | `false` | No | Whether to perform a full rebuild of all detected Lambda folders, ignoring changed-directory filtering |
+
+When `bundle-nodejs` is `true`, each Node.js function directory must contain a committed `package-lock.json` or `npm-shrinkwrap.json` and declare `esbuild` in its `package.json`. The workflow bundles all top-level `.js` files and externalizes npm packages into the existing dependency layer. It temporarily installs development dependencies to run project-local esbuild, then removes them before creating the layer. It uses ESM output when `package.json` sets `"type": "module"`, otherwise CommonJS. Runtime files loaded by filesystem path are not added to the bundle automatically. Bundling forces a full rebuild of all detected Lambda folders, including Python Lambdas, so shared-file changes cannot leave stale bundles; `full-rebuild` does not need to be set separately.
 
 ### Example
 
@@ -98,7 +101,7 @@ jobs:
       environment: dev
       region: eu-west-1
       working-directory: lambdas
-      full-rebuild: true
+      bundle-nodejs: true
     secrets: inherit
 ```
 

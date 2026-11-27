@@ -20,6 +20,11 @@ on:
         type: string
         required: false
         default: '.'
+      bundle-nodejs:
+        description: 'Bundle Node.js Lambda functions with project-local esbuild before packaging'
+        type: boolean
+        required: false
+        default: false
       full-rebuild:
         description: 'Whether to perform a full rebuild of all lambdas (true/false)'
         type: boolean
@@ -60,7 +65,7 @@ jobs:
       uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       with:
         # Full history is needed to detect changed files when not doing a full rebuild
-        fetch-depth: ${{ inputs.full-rebuild && 1 || 0 }}
+        fetch-depth: ${{ (inputs.full-rebuild || inputs.bundle-nodejs) && 1 || 0 }}
 
     - name: Detect Lambda functions and build types
       id: detect
@@ -68,7 +73,7 @@ jobs:
       run: |
         LAMBDAS='[]'
         HAS_LAMBDAS='false'
-        FULL_REBUILD="${{ inputs.full-rebuild }}"
+        FULL_REBUILD="${{ inputs.full-rebuild || inputs.bundle-nodejs }}"
 
         # Check if working directory exists
         if [ ! -d "${{ inputs.working-directory }}" ]; then
@@ -333,6 +338,9 @@ jobs:
     - name: Build Node.js Lambda
       if: matrix.lambda.type == 'nodejs'
       shell: bash
+      env:
+        BUNDLE_NODEJS: ${{ inputs.bundle-nodejs }}
+        HAS_HANDLER: ${{ matrix.lambda.has_handler }}
       run: |
         # Navigate to the lambda directory (create zips here, then move them up one level)
         if [ -n "${{ matrix.lambda.path }}" ]; then
@@ -343,19 +351,104 @@ jobs:
 
         # Use the folder name as the package filename
         NAME_ONLY="${{ matrix.lambda.folder }}"
+        LAMBDA_DIR="$PWD"
 
-        # Install dependencies if package.json exists
+        if [ "$BUNDLE_NODEJS" = "true" ] && [ "$HAS_HANDLER" = "true" ]; then
+          if [ ! -f "package.json" ]; then
+            echo "::error::bundle-nodejs requires package.json in the Lambda directory."
+            exit 1
+          fi
+          if [ ! -f "package-lock.json" ] && [ ! -f "npm-shrinkwrap.json" ]; then
+            echo "::error::bundle-nodejs requires a committed package-lock.json or npm-shrinkwrap.json."
+            exit 1
+          fi
+        fi
+
         if [ -f "package.json" ]; then
-          # Use 'npm ci' when a lockfile is present for a deterministic, reproducible install.
-          npm install --package-lock-only
-          if [ -f "package-lock.json" ] || [ -f "npm-shrinkwrap.json" ]; then
-            echo "Lockfile found – using 'npm ci' for deterministic install (omitting dev and optional deps)..."
-            npm ci --omit=dev --omit=optional
+          if [ "$BUNDLE_NODEJS" = "true" ] && [ "$HAS_HANDLER" = "true" ]; then
+            echo "Installing locked dependencies, including esbuild and optional packages..."
+            npm ci --include=dev --include=optional
           else
-            echo "No lockfile found – falling back to 'npm install' (omitting dev and optional deps)..."
-            npm install --omit=dev --omit=optional
+            npm install --package-lock-only
+            if [ -f "package-lock.json" ] || [ -f "npm-shrinkwrap.json" ]; then
+              echo "Installing production and optional dependencies from the lockfile..."
+              npm ci --omit=dev --include=optional
+            else
+              echo "No lockfile available – falling back to npm install..."
+              npm install --omit=dev --include=optional
+            fi
           fi
 
+          npm audit --omit=dev --audit-level=high
+        else
+          echo "No package.json found, skipping dependency installation and audit"
+        fi
+
+        if [ "$HAS_HANDLER" = "true" ]; then
+          echo "Creating main package with JavaScript code and package manifests..."
+          if [ "$BUNDLE_NODEJS" = "true" ]; then
+            if [ ! -x "node_modules/.bin/esbuild" ]; then
+              echo "::error::bundle-nodejs requires esbuild as a dependency in package.json."
+              exit 1
+            fi
+
+            PACKAGE_FORMAT=$(node -p "require('./package.json').type === 'module' ? 'esm' : 'cjs'")
+            NODE_TARGET=$(node -p "'node' + process.versions.node.split('.').slice(0, 2).join('.')")
+            BUNDLE_DIR=$(mktemp -d)
+            trap 'rm -rf "$BUNDLE_DIR"' EXIT
+            JS_ENTRIES=( *.js )
+
+            ./node_modules/.bin/esbuild "${JS_ENTRIES[@]}" \
+              --bundle \
+              --packages=external \
+              --platform=node \
+              --target="$NODE_TARGET" \
+              --format="$PACKAGE_FORMAT" \
+              --outdir="$BUNDLE_DIR"
+
+            for manifest in package.json package-lock.json npm-shrinkwrap.json; do
+              if [ -f "$manifest" ]; then
+                cp "$manifest" "$BUNDLE_DIR/"
+              fi
+            done
+
+            (
+              cd "$BUNDLE_DIR"
+              PACKAGE_FILES=( *.js )
+              for manifest in package.json package-lock.json npm-shrinkwrap.json; do
+                if [ -f "$manifest" ]; then
+                  PACKAGE_FILES+=( "$manifest" )
+                fi
+              done
+              zip "$LAMBDA_DIR/${NAME_ONLY}.zip" "${PACKAGE_FILES[@]}"
+            )
+          else
+            if ls *.js 1> /dev/null 2>&1; then
+              PACKAGE_FILES=( *.js )
+              for manifest in package.json package-lock.json npm-shrinkwrap.json; do
+                if [ -f "$manifest" ]; then
+                  PACKAGE_FILES+=( "$manifest" )
+                fi
+              done
+              zip "${NAME_ONLY}.zip" "${PACKAGE_FILES[@]}"
+            else
+              echo "Error: No JavaScript files found to package"
+              exit 1
+            fi
+          fi
+
+          mv "${NAME_ONLY}.zip" "../${NAME_ONLY}.zip"
+          echo "Lambda package moved to parent: ../${NAME_ONLY}.zip"
+          ls -lh "../${NAME_ONLY}.zip"
+        else
+          echo "No handler file present, skipping function package creation (layer-only build)"
+        fi
+
+        if [ "$BUNDLE_NODEJS" = "true" ] && [ "$HAS_HANDLER" = "true" ]; then
+          npm prune --omit=dev --include=optional
+        fi
+
+        if [ -f "package.json" ]; then
           # Create layer zip with dependencies only (node_modules) in current directory
           if [ -d "node_modules" ] && [ "$(ls -A node_modules)" ]; then
             # Prune unnecessary files from node_modules before zipping to reduce layer size.
@@ -401,34 +494,6 @@ jobs:
           fi
         else
           echo "No package.json found, skipping dependency installation and layer creation"
-        fi
-
-        # Create main zip file with JavaScript code and package manifests
-        # Only create function package if handler files exist
-        if [ "${{ matrix.lambda.has_handler }}" = "true" ]; then
-          # Define common exclusions
-          COMMON_EXCLUSIONS="-x .git/* -x .DS_Store -x *.log"
-          NODEJS_EXCLUSIONS="-x node_modules/* -x nodejs/*"
-
-          echo "Creating main package with code and package manifests..."
-          if ls *.js 1> /dev/null 2>&1; then
-            PACKAGE_FILES=( *.js )
-            for manifest in package.json package-lock.json npm-shrinkwrap.json; do
-              if [ -f "$manifest" ]; then
-                PACKAGE_FILES+=( "$manifest" )
-              fi
-            done
-            zip "${NAME_ONLY}.zip" "${PACKAGE_FILES[@]}" $COMMON_EXCLUSIONS $NODEJS_EXCLUSIONS
-            # Move the package zip up one level (to parent folder)
-            mv "${NAME_ONLY}.zip" "../${NAME_ONLY}.zip"
-            echo "Lambda package moved to parent: ../${NAME_ONLY}.zip"
-            ls -lh "../${NAME_ONLY}.zip"
-          else
-            echo "Error: No JavaScript files found to package"
-            exit 1
-          fi
-        else
-          echo "No handler file present, skipping function package creation (layer-only build)"
         fi
 
     - name: Upload Lambda packages to S3
